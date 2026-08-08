@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Test / coverage output
+coverage/
+
+# SuiteCloud CLI local state & credentials (NEVER commit tokens)
+.sdf/
+*.sdfcredentials
+project.json
+
+# Logs & OS cruft
+*.log
+npm-debug.log*
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# Env
+.env
+.env.*

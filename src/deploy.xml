@@ -1,0 +1,13 @@
+<deploy>
+    <files>
+        <path>~/FileCabinet/SuiteScripts/WMS/*</path>
+    </files>
+    <!--
+      Objects is empty until Phase 1 (T-1.1 onward) deploys the customrecord_wms_*
+      records. SDF tolerates the empty glob; the path is kept so no deploy.xml edit
+      is needed when the first object lands.
+    -->
+    <objects>
+        <path>~/Objects/*</path>
+    </objects>
+</deploy>

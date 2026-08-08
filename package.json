@@ -1,0 +1,28 @@
+{
+    "name": "er-netsuite-wms",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Advanced Warehouse Management — native NetSuite (SuiteScript 2.1) execution engine. SDF project, test harness and CI foundation (T-0.5).",
+    "engines": {
+        "node": ">=20"
+    },
+    "scripts": {
+        "lint": "eslint .",
+        "test": "jest",
+        "test:coverage": "jest --coverage",
+        "guard:binnumber": "node scripts/guard-forbidden-tokens.js",
+        "verify": "npm run lint && npm test && npm run guard:binnumber",
+        "deploy:dev": "suitecloud project:deploy --authid wms_dev",
+        "deploy:uat": "suitecloud project:deploy --authid wms_uat",
+        "deploy:prod": "suitecloud project:deploy --authid wms_prod",
+        "validate:dev": "suitecloud project:validate --server --authid wms_dev"
+    },
+    "devDependencies": {
+        "@babel/core": "^7.29.7",
+        "@babel/preset-env": "^7.29.7",
+        "babel-jest": "^29.7.0",
+        "babel-plugin-transform-amd-to-commonjs": "^1.6.0",
+        "eslint": "^8.57.1",
+        "jest": "^29.7.0"
+    }
+}

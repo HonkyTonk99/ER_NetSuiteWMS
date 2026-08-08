@@ -1,0 +1,4 @@
+<manifest projecttype="ACCOUNTCUSTOMIZATION">
+    <projectname>ER NetSuite WMS</projectname>
+    <frameworkversion>1.0</frameworkversion>
+</manifest>

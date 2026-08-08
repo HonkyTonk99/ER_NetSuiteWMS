@@ -1,0 +1,34 @@
+name: CI
+
+# Runs on every push and on pull requests. Configure branch protection on the
+# default branch to require this workflow before merge — see CONTRIBUTING.md.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  verify:
+    name: Lint, unit tests & invariant guards
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test -- --ci
+
+      - name: Invariant guard (no NetSuite bin constructs)
+        run: npm run guard:binnumber
