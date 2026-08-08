@@ -63,7 +63,8 @@ account-dependent step and is not part of `npm ci`.
 ├── tasks/                    # Task backlog with Given/When/Then acceptance criteria
 │   ├── phase-0-2-foundation.md
 │   ├── phase-3-5-engine.md
-│   └── phase-6-9-operations.md
+│   ├── phase-6-9-operations.md
+│   └── phase-10-13-hardening.md
 ├── src/                      # SDF Account Customization Project (deployed by SDF)
 │   ├── manifest.xml
 │   ├── deploy.xml
@@ -121,6 +122,7 @@ npm run test:coverage    # coverage over src/FileCabinet/SuiteScripts
 > handling). The decisions log marks what was overruled. Do not build from the
 > superseded sections.
 
-> **Note:** `tasks/phase-10-13-hardening.md` (Phases 10–13: bin remediation,
-> housekeeping, performance, cutover) is referenced by the delivery plan but is
-> **not yet in this repository** — it was not part of the T-0.5 hand-off.
+The full backlog is **66 tasks across four phase files** in `tasks/`, covering
+Phases 0–13: discovery, data model, core services, ingestion & handheld, ledger
+commit, replenishment, inbound, waves, pick & pack, exceptions & custody,
+dashboard, bin remediation, housekeeping, performance, and cutover.
