@@ -55,25 +55,25 @@ no `inventorybalance` query on the operator's path.
 `inventorybalance` remains the **financial** truth. The projection is the **operational** truth. They
 are reconciled nightly (T-8.3), and divergence between them is itself a monitored signal.
 
-### F-02 · S2 · The concurrency lock record is defined but never acquired → `T-2.2`
+### F-02 · ~~S2~~ **WITHDRAWN (D-12)** · The lock could never have worked — its primitive doesn't exist → *(no task; locks removed)*
 
-> **Scope reduced 2026-08-07 per D-01.** Locks are removed from the ingestion path. They are
-> retained only in the Map/Reduce commit stage, where genuine parallelism exists across queues —
-> two reduce threads *can* touch the same bin, and that is a machine-machine race, not a
-> human-human one. Severity downgraded S1 → S2 accordingly.
+> **Withdrawn 2026-08-09 per D-12.** The original finding was that `customrecord_wms_concurrency_lock`
+> was defined but never acquired, and proposed the only race-free NetSuite pattern: mark
+> `custrecord_lock_resource_id` **unique**, attempt the create, loser catches the unique violation.
+> **That pattern does not exist** — NetSuite has no value-uniqueness constraint (D-12). So the lock
+> could never have been made race-free at all. Rather than build on a non-existent primitive, locks
+> are removed and the races removed structurally: order commits serialised by AD-06 grouping +
+> `PROCESSING` claiming; bin-affecting commit work single-threaded through one M/R queue.
+> `customrecord_wms_concurrency_lock`, the reaper (was T-11.2) and `STALE_LOCK`/`LOCK_TIMEOUT` are
+> deleted. See AD-04 (idempotency, now committer-side dedupe) and AD-05 (withdrawn).
 
-`customrecord_wms_concurrency_lock` has fields (`resource_type`, `resource_id`, `acquired_by`,
-`acquired_time`) and no logic anywhere: no acquire, no release, no TTL, no stale-lock reaping, no
-deadlock ordering. As specified it does nothing.
+*Original analysis retained below for traceability — the defect it described is real; the fix it
+proposed is the one that turned out to be impossible.*
 
-Worse, the obvious implementation (search for a lock, if none create one) is itself a race. The only
-race-free pattern on NetSuite is: mark `custrecord_lock_resource_id` **unique**, then *attempt the
-create* — the loser gets `UNIQUE_FIELD_VALUE_ALREADY_EXISTS` and backs off. Release = delete.
-A scheduled reaper clears locks older than a configured TTL (recommend 120 s).
-
-Locks must also be acquired in a **deterministic global order** (recommend: resource type ordinal,
-then internal ID ascending) whenever a unit of work needs more than one, or two reduce threads
-transferring stock between the same pair of bins in opposite directions will deadlock each other.
+`customrecord_wms_concurrency_lock` had fields (`resource_type`, `resource_id`, `acquired_by`,
+`acquired_time`) and no logic anywhere. The proposed race-free pattern — mark `custrecord_lock_resource_id`
+unique and attempt the create — assumed a uniqueness primitive NetSuite does not provide, which is
+exactly what D-12 established.
 
 ### F-03 · S1 · No re-assertion of invariants between validation and posting → `T-4.4`, `T-8.1`
 
@@ -170,10 +170,13 @@ server ingestion P95 < 600 ms, P99 < 1200 ms; event → ledger posting P95 < 5 m
 database read on the hot path, contradicting Doc A's own "2–4 governance units per scan" claim in
 the §5 matrix.
 
-**Correction:** make `custrecord_se_event_id` a **unique** field and attempt the insert. A duplicate
-UUID fails fast at the database with `UNIQUE_FIELD_VALUE_ALREADY_EXISTS`, which the RESTlet catches
-and converts to `{status:'SUCCESS', idempotent:true}`. Zero extra reads, and it is correct under
-concurrency, which the search-then-create pattern is not.
+**Correction *(superseded by D-12)*:** the original fix made `custrecord_se_event_id` a **unique**
+field and caught `UNIQUE_FIELD_VALUE_ALREADY_EXISTS` on insert. **That primitive does not exist** —
+NetSuite has no value-uniqueness constraint (D-12). The defect the finding raised is still real (a
+per-scan saved search is banned on the hot path), but the fix is now **committer-side dedupe** (AD-04):
+ingestion inserts with no check, and the committer groups by UUID, keeps the first and marks the rest
+`SUPERSEDED`. Zero reads on the hot path, and correct under concurrency — the guarantee is "no
+duplicate *ledger postings*", not "no duplicate rows".
 
 ### F-09 · S2 · Concurrency, not governance, is the binding constraint → `T-0.2`, `T-3.2`, `T-12.1`
 
@@ -454,9 +457,10 @@ rejection, hours after an operator did everything correctly.
 outbound events.** Any outbound event that still cannot be satisfied is **deferred and retried**,
 never failed on first attempt; only after a configured number of cycles does it become an exception.
 
-### F-26 · S2 · Non-fulfillable bins make NetSuite over-commit → *(with sponsor — do not implement)*
+### F-26 · S2 · Non-fulfillable bins make NetSuite over-commit → **tracked as Q-29** *(with sponsor — do not implement)*
 
-*Raised 2026-08-09, arising from Q-16 (`availableForFulfilment`).*
+*Raised 2026-08-09, arising from Q-16 / D-16 (`availableForFulfilment`). The decision is tracked in
+the register as **Q-29**; this finding is the analysis behind it.*
 
 Bins of type QUALITY, RETURN, DEFECT (and STAGE, RECEIVING) hold stock that is physically present but
 **not pickable** — the WMS will not allocate from them (`availableForFulfilment: false`, enforced in

@@ -18,16 +18,19 @@ POST endpoint accepting the scan payload (uuid, eventType, operatorId, waveId, o
 orderLineKey, skuCode, batchNumber, sourceBinId, targetBinId, qty, locationId, deviceId, clientTs).
 Flow: schema validation → resolve item/bin metadata from cache → read bin state projection (T-2.3)
 → apply bin policy (T-2.3b) → `writeScanEvent` → update projection → return. **No saved search on
-the success path. No `record.transform`. No inventory posting. No lock.**
-Structured JSON responses for success, idempotent-duplicate, validation failure and platform error,
-each with a machine-readable code the client can branch on. Structured logging of execution time.
+the success path. No `record.transform`. No inventory posting. No lock. No duplicate detection** —
+NetSuite has no unique constraint (D-12) and a search on the hot path is banned, so a retried UUID may
+create a second row; the committer dedupes by UUID (AD-04). A repeated POST therefore always returns
+plain `SUCCESS` (safe: same UUID → one posting).
+Structured JSON responses for success, validation failure and platform error, each with a
+machine-readable code the client can branch on. Structured logging of execution time.
 Support an optional **batch payload** (array of events) so the client can drain its queue in fewer
 round-trips — a direct mitigation for F-09.
 
 **Acceptance**
 - [ ] GIVEN a valid scan payload, WHEN posted, THEN a PENDING scan event is created and a success response returns; measured server time P95 < 600 ms and P99 < 1200 ms under the Phase 12 load profile.
 - [ ] GIVEN a payload violating bin isolation, WHEN posted, THEN no event is created and the response carries `ERR_WMS_BIN_CONSTRAINT_VIOLATION` with the conflicting item and lot in the message.
-- [ ] GIVEN a duplicate UUID, WHEN posted, THEN the response is success with `idempotent: true` and no second row is created.
+- [ ] GIVEN a duplicate UUID, WHEN posted, THEN the response is plain `SUCCESS` (a second row may exist; the committer supersedes all but one, so exactly one posting results — D-12/AD-04).
 - [ ] GIVEN a batch of 20 events, WHEN posted in one request, THEN each is processed independently and the response contains a per-event result array.
 - [ ] GIVEN any request, WHEN governance is measured, THEN the success path executes zero saved searches.
 
@@ -145,25 +148,32 @@ Large-touch-target, glove-friendly layout.
 
 # PHASE 4 — Asynchronous Ledger Commit
 
-### T-4.1 — `wms_mr_ledger_commit.js` — Map/Reduce skeleton and grouping
-**Depends on:** T-2.2, T-2.3 · **Resolves:** F-12, F-15 · **Implements:** AD-06
+### T-4.1 — `wms_mr_ledger_commit.js` — Map/Reduce skeleton, dedupe and grouping
+**Depends on:** T-2.3, T-2.4 · **Resolves:** F-12, F-15, F-08 · **Implements:** AD-06, AD-04 · *(updated per D-12)*
 
 **Narrative**
 As the system, I want all events for one sales order processed by exactly one reduce invocation, so
-that a single `record.transform` per order eliminates the record-locking exceptions the architecture
-exists to prevent.
+that a single `record.transform` per order eliminates the record-changed exceptions the architecture
+exists to prevent — with no locks (D-12), because grouping and a single settlement queue remove the
+races structurally.
 
 **Requirement**
 `getInputData` searches PENDING events (indexed, paged). `map` emits a **JSON** group key —
 `{k:'ORDER', orderId}` for PICK/PACK, `{k:'MOVE', locationId, sourceBinId}` for REPLEN_MOVE /
-BIN_TRANSFER / PUTAWAY — never an underscore-delimited string. Events are flipped to PROCESSING on
-claim so a concurrent run cannot pick them up. `summarize` logs counts by outcome and feeds T-9.2.
+BIN_TRANSFER / PUTAWAY — never an underscore-delimited string. Events are flipped to `PROCESSING` on
+claim so a concurrent run cannot pick them up. **Dedupe by `custrecord_se_event_id` within the group
+(AD-04, D-12): keep the earliest, mark the rest `SUPERSEDED`, post from the survivor** — this is the
+idempotency guarantee, since NetSuite has no unique constraint. **Bin-affecting work
+(`{k:'MOVE',...}` and any bin-state settlement) runs on a single dedicated M/R queue** so two threads
+never touch the same bin (AD-05 withdrawn; single-threaded bin-state settlement). `summarize` logs
+counts by outcome and feeds T-9.2. **No locks are taken anywhere.**
 
 **Acceptance**
 - [ ] GIVEN PICK and PACK events for the same order, WHEN the M/R runs, THEN both land in one reduce invocation and exactly one Item Fulfillment is created.
+- [ ] GIVEN duplicate rows with the same `custrecord_se_event_id`, WHEN the group is processed, THEN exactly one is posted and the rest are marked `SUPERSEDED` (no duplicate ledger posting).
 - [ ] GIVEN REPLEN_MOVE and BIN_TRANSFER events, WHEN keys are parsed, THEN event type and identifiers are recovered correctly despite the underscores in the enum values.
-- [ ] GIVEN two overlapping M/R executions, THEN no event is processed twice (verified by POSTED count equalling distinct UUID count).
-- [ ] GIVEN a run completes, THEN `summarize` records processed, posted, failed and skipped counts.
+- [ ] GIVEN two overlapping M/R executions, THEN no event is processed twice (verified by POSTED count equalling distinct UUID count), and no lock record exists or is referenced.
+- [ ] GIVEN a run completes, THEN `summarize` records processed, posted, failed, superseded and skipped counts.
 
 ---
 
@@ -197,7 +207,7 @@ appearing on multiple SO lines by keying on line unique key, never on item ID.
 ---
 
 ### T-4.3 — Bin transfer and inventory adjustment commit
-**Depends on:** T-4.1, T-2.2 · **Resolves:** F-13
+**Depends on:** T-4.1 · **Resolves:** F-13 · *(locks removed per D-12)*
 
 **Narrative**
 As an inventory controller, I want bin-to-bin moves posted correctly and grouped safely, so that
@@ -205,9 +215,10 @@ transfers do not fail on location mismatch or silently combine stock from differ
 
 **Requirement**
 Set `location` from `custrecord_se_location` — **never** from a bin internal ID. Group by
-`(locationId, sourceBinId)` so every transfer is constructible. Acquire bin locks in canonical order
-before committing. Re-check the target bin's policy against the projection inside the lock, and
-reconcile the projection after posting. **Bin-to-bin moves post nothing to NetSuite, ever** —
+`(locationId, sourceBinId)` so every transfer is constructible. This work runs on the **single
+bin-affecting settlement queue (T-4.1), so no locks are needed** (AD-05 withdrawn, D-12) — one thread
+means no interleaving. Re-check the target bin's policy against the projection, then reconcile the
+projection after posting. **Bin-to-bin moves post nothing to NetSuite, ever** —
 NetSuite has no concept of a bin (D-07) and the stock has not changed location, so there is no
 financial event. The commit updates WMS bin state only. `inventoryadjustment` is used solely for
 count variances, through the adapter, with a documented adjustment account.
@@ -225,7 +236,7 @@ now sits in a bin with `availableForFulfilment: false`.
 - [ ] GIVEN any move event, WHEN it commits, THEN the WMS projection updates, **no NetSuite transaction is created**, and the event is marked POSTED rather than FAILED.
 - [ ] GIVEN a bin transfer targeting a non-fulfillable bin type (RETURN/QUALITY/DEFECT), THEN the transfer **succeeds** and the moved stock is thereafter **excluded from allocation (T-7.1) and replenishment sourcing (T-5.2)**.
 - [ ] GIVEN a target bin whose contents changed after ingestion, WHEN commit re-asserts the invariant, THEN the transfer is rejected and an INVARIANT_VIOLATION exception is raised naming the conflict.
-- [ ] GIVEN two threads transferring between the same two bins in opposite directions, THEN neither deadlocks.
+- [ ] GIVEN opposing transfers between the same two bins, WHEN they run on the single settlement queue, THEN they process one after another with no interleaving and no lock — deadlock is structurally impossible.
 
 ---
 
@@ -238,7 +249,8 @@ posting, so that the operational and financial views of a bin converge as soon a
 
 **Requirement**
 After each successful ledger post, clear the corresponding `custrecord_bs_pending_delta` and stamp
-`custrecord_bs_last_reconciled` on the affected bins, inside the commit-stage lock (AD-05). Re-check
+`custrecord_bs_last_reconciled` on the affected bins. This runs on the **single bin-affecting
+settlement queue (T-4.1), so no lock is needed** (AD-05 withdrawn, D-12). Re-check
 the target bin's policy before posting — cheap, since the projection is already loaded — and treat a
 conflict as an exception (T-8.1) carrying the event, the operator and the current bin state, never
 as a silent FAILED status. Emit the commit-stage rejection count as a KPI: it should be near zero,
@@ -247,7 +259,7 @@ and a rising rate means ingestion and commit are seeing different worlds.
 **Acceptance**
 - [ ] GIVEN an event accepted at ingestion that conflicts at commit time, WHEN committed, THEN nothing posts, the event is FAILED, and an INVARIANT_VIOLATION exception exists naming the current bin state.
 - [ ] GIVEN a successful post, THEN `pending_delta` is cleared and `last_reconciled` is stamped for every affected bin.
-- [ ] GIVEN the reconciliation, THEN it executes inside a held bin lock (assertion in DEV builds).
+- [ ] GIVEN the reconciliation, THEN it executes on the single bin-affecting settlement queue (no lock; assertion in DEV builds that no lock record is referenced).
 - [ ] GIVEN a run, THEN the commit-stage rejection count is written to the metric snapshot.
 - [ ] GIVEN a fully drained queue, THEN the summed WMS bin quantity equals NetSuite quantity on hand for every item and location — additionally per lot for LOT items (reconciliation is item/location grain; NetSuite has no bin dimension).
 

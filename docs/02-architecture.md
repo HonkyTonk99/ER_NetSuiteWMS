@@ -20,9 +20,9 @@ Ingestion RESTlet             ~≤600ms P95
 Scan Event table (append-only, immutable except status)
    │
    ▼
-Map/Reduce ledger committer   (SuiteCloud Plus, N queues)
-   │  group by ORDER (not event type)
-   │  acquire locks in canonical order
+Map/Reduce ledger committer   (SuiteCloud Plus)
+   │  dedupe by UUID (keep first, rest SUPERSEDED)   ← AD-04
+   │  group by ORDER (not event type); bin-affecting work on ONE queue  ← AD-05 (no locks, D-12)
    │  RE-ASSERT invariants vs live inventory  ← authoritative
    │  one record.transform per order
    ├── success → status=POSTED, link to txn
@@ -74,8 +74,9 @@ no collections, no child records.
   updates the projection with the accepted delta. No lock, no search, no `inventorybalance` query on
   the operator's path.
 - **Commit** applies the ledger posting and reconciles the projection, clearing `pending_delta`.
-  Bin locks are still taken *here* (AD-05) because two reduce threads genuinely can collide — that
-  is a machine-machine race, unlike the human-human one that was over-engineered before.
+  Bin-affecting commit work runs on a **single Map/Reduce queue** (AD-05, withdrawn locks per D-12),
+  so two threads never target the same bin — the machine-machine race is removed structurally, not
+  locked against.
 - **Nightly reconciliation** (T-8.3) compares projection against `inventorybalance`. They should
   agree once the queue is drained; persistent divergence is a monitored signal and raises an
   exception.
@@ -93,8 +94,9 @@ mismatch, not closed.
 
 **The residual risk is bounded and accepted, by design — do not build a heavier primitive to close it:**
 
-- The window exists **only on the ingestion path.** The commit path takes the bin lock (AD-05), so
-  machine-machine races there are serialised.
+- The window exists **only on the ingestion path.** Bin-affecting commit work is **single-threaded
+  through one Map/Reduce queue** (D-12, single-threaded bin-state settlement), so there is no
+  machine-machine race there.
 - On ingestion the colliding parties are two operators, and **D-01 rules operator-to-operator
   collision on a directed floor not a credible risk.** A lost update here needs two operators writing
   the same bin in the same sub-second window.
@@ -104,36 +106,42 @@ mismatch, not closed.
 A distributed lock or a heavier concurrency primitive on the ingestion path would re-introduce exactly
 the cost D-01 removed, to close a window the backstop already covers. It is deliberately not built.
 
-## AD-04 — Unique-index idempotency, no read on the hot path (resolves F-08)
+## AD-04 — Committer-side dedupe idempotency *(rewritten per D-12; supersedes unique-index idempotency)*
 
-`custrecord_se_event_id` is defined **unique**. Ingestion attempts the insert directly.
+NetSuite has **no value-uniqueness constraint** (D-12) — a "unique" custom field is application-layer
+validation, not a race-free database constraint. So idempotency is **not** enforced at insert time.
+
+- **Ingestion** inserts the scan event directly, no pre-read, no reliance on a unique field. A retried
+  POST of the same UUID may create a **duplicate row** — that is expected and harmless.
+- **The committer dedupes.** When it groups events (AD-06), it groups by `custrecord_se_event_id`
+  first: keep the earliest row, mark the rest **`SUPERSEDED`**, and post from the survivor. The
+  guarantee is **"no duplicate *ledger postings*"**, which is the property that matters — not "no
+  duplicate rows".
 
 ```
-try   { create + save }              → { status:'SUCCESS', eventId }
-catch UNIQUE_FIELD_VALUE_ALREADY_EXISTS
-      → { status:'SUCCESS', idempotent:true }     // safe retry, not an error
-catch anything else
-      → { status:'ERROR', code, message, retryable:true|false }
+ingest:  create + save                → { status:'SUCCESS', eventId }   // may duplicate on retry; fine
+         catch platform error         → { status:'ERROR', code, message, retryable:true|false }
+
+commit:  group by UUID → keep first, mark rest SUPERSEDED → post once
 ```
 
-Client UUIDs are v4, generated **before** the first send attempt and reused verbatim on every retry
-of that scan.
+Client UUIDs are v4, generated **before** the first send attempt and reused verbatim on every retry of
+that scan — so all retries of one scan share a UUID and collapse to one posting.
 
-## AD-05 — Lock protocol, commit stage only *(scope reduced per D-01)*
+## AD-05 — *(WITHDRAWN per D-12)* No distributed locks
 
-**Locks are not used on the ingestion path.** Operator-to-operator collision is not a credible risk
-and the projection's optimistic version check (AD-03) covers what little exposure remains. Locks
-exist solely inside the Map/Reduce commit stage, where multiple queues process in genuine parallel
-and two reduce threads can legitimately target the same bin.
+**Withdrawn.** The lock protocol required a race-free "acquire = attempt a unique create" primitive,
+and NetSuite has no value-uniqueness constraint to provide it (D-12). Rather than build a lock on a
+foundation that does not exist, the races it guarded are removed structurally:
 
-- `custrecord_lock_resource_id` is **unique**. Acquire = attempt create; loser catches the unique
-  violation and backs off (exponential, jittered, capped).
-- Release = delete the lock record, always in a `finally`.
-- **Lock ordering:** when more than one lock is needed, acquire by `(resourceTypeOrdinal, resourceId)`
-  ascending. Non-negotiable — bin-to-bin transfers in opposing directions deadlock without it.
-- **TTL:** default 120 s. A scheduled reaper deletes locks older than TTL and raises an exception
-  record so orphaned locks are visible rather than silent.
-- Lock scope is deliberately coarse: **bin** for inventory moves, **order** for fulfillment commits.
+- **Order commits** are already serialised by AD-06 (all of an order's events land in one reduce
+  invocation) plus flipping claimed events to `PROCESSING`. No order lock needed.
+- **Bin-affecting commit work** runs **single-threaded through one Map/Reduce queue** — *single-threaded
+  bin-state settlement*. Two threads never target the same bin because there is only one thread. The
+  cost is lost parallelism on that phase; accepted (D-12).
+
+`customrecord_wms_concurrency_lock`, the stale-lock reaper (was T-11.2), and the `STALE_LOCK` /
+`LOCK_TIMEOUT` exception types are **deleted**. Ingestion still takes no lock.
 
 ## AD-06 — Reduce grouping by order, not by event type (resolves F-12, F-15)
 
@@ -147,7 +155,7 @@ JSON.stringify({ k: 'MOVE', locationId, sourceBinId })
 ```
 
 All PICK and PACK events for one order land in **one** reduce invocation → one `record.transform`
-→ no duplicate fulfillment, no lock contention with itself. Move events are grouped by location +
+→ no duplicate fulfillment, and one order settled by one invocation. Move events are grouped by location +
 source bin so the Bin Transfer is constructible.
 
 ## AD-07 — Fulfillment line aggregation (resolves F-14)
@@ -202,9 +210,19 @@ network at all and to treat connectivity as an intermittent bonus rather than a 
 Visible at all times: unsynced count and oldest unsynced age. The operator is hard-blocked only when
 queue depth or staleness exceeds configured limits, with a supervisor-visible reason.
 
-**Impact on Q-01:** capabilities 1 and 3 need dependable local persistence and background execution.
-Browser/PWA clients do not reliably provide either on rugged Android. Recommendation firmed to a
-**native app**.
+**Delivery — a PWA (D-13, closes Q-01).** *(Corrects the earlier claim that a browser/PWA client
+"cannot dependably" deliver local persistence and background execution — that was wrong.)* Offline-first
+(D-04) is unchanged; it is delivered as a **responsive PWA, Android-first, served from NetSuite (iOS
+out of scope)**:
+- **Local cache and durable outbound queue → IndexedDB.**
+- **`navigator.storage.persist()`** to request persistent storage and avoid eviction.
+- **Service worker** for asset caching (app shell available offline).
+
+**Residual risk, accepted in writing (D-13):** a PWA has **no background sync when the app is not
+foregrounded**, and **storage can be evicted if `persist()` is denied**. Accepted on the basis that an
+operator who is actively picking has the app **open**, so the queue drains as they work; mitigated by
+the always-visible unsynced count and the hard-block on queue depth/age (T-3.2). The IndexedDB schema
+and service-worker strategy are **Phase 3 design work**, not spec.
 
 Server SLAs re-baselined: ingestion P95 < 600 ms, P99 < 1200 ms; event→ledger P95 < 5 min. Note that
 with offline-first these are throughput targets, not operator-experience targets — the operator's

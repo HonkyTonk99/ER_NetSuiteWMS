@@ -377,6 +377,102 @@ layers stay.
 
 ---
 
+## D-12 — No value-uniqueness constraint in NetSuite; locks withdrawn, idempotency moves to the committer · *accepted 2026-08-09*
+
+**Platform finding (TK):** *a custom text field can hold the same value on many records — NetSuite has
+no value-uniqueness constraint. A "unique" checkbox is application-layer validation, not a database
+constraint, and a control script that searches-then-creates is read-then-write and therefore racy
+under two simultaneous saves.*
+
+This **disproves the assumption AD-04 and AD-05 were built on** (T-0.6 spike, now answered by ruling
+rather than experiment). Both are re-designed:
+
+- **AD-04 (idempotency) → committer-side dedupe.** Ingestion inserts the scan event with no pre-read
+  and no reliance on a unique field (a retry may create a duplicate row). The **committer** groups by
+  `custrecord_se_event_id` (UUID), keeps the first, and marks the rest **`SUPERSEDED`**. The guarantee
+  changes from "no duplicate rows" to **"no duplicate ledger postings"** — which is the property that
+  actually matters.
+- **AD-05 (locking) → WITHDRAWN.** The **order lock** was redundant given AD-06's group-by-order plus
+  flipping events to `PROCESSING` on claim (one reduce invocation owns an order already). The **bin
+  lock** is replaced by **single-threaded bin-state settlement** — all bin-affecting commit work runs
+  through **one Map/Reduce queue**, so there is no machine-machine race to lock against.
+  `customrecord_wms_concurrency_lock` is **deleted**, along with the stale-lock reaper and the
+  `STALE_LOCK` / `LOCK_TIMEOUT` exception types.
+
+**Cost:** the bin-affecting commit phase loses parallelism (single queue). Accepted — it removes an
+entire failure class (deadlocks, orphaned locks, the reaper) and a platform primitive that does not
+exist. Other commit work (fulfillment by order) still parallelises.
+
+**Supersedes:** AD-04, AD-05, F-02 (the lock was removed because the primitive it required does not
+exist — not merely reduced in scope), CLAUDE.md invariants #3 and #7, and the lock record §3.2.
+
+## D-13 — Handheld is a responsive PWA · *accepted*
+
+**Ruling:** the handheld is a **responsive PWA, Android-first, served from NetSuite. iOS is out of
+scope.**
+
+**Supersedes** the plan's recommendation of a native app, and **corrects AD-09**, which wrongly stated
+a browser/PWA client *cannot dependably* deliver local persistence and background execution. It can:
+IndexedDB for the local cache and durable outbound queue, `navigator.storage.persist()` against
+eviction, a service worker for asset caching. Offline-first (D-04) is unchanged.
+
+**Residual risk, accepted in writing:** no background sync when the app is not foregrounded, and
+storage eviction if `persist()` is denied. Accepted because an operator who is actively picking has
+the app open, so the queue drains as they work; mitigated by the visible unsynced count and the
+hard-block on queue depth/age already in T-3.2. IndexedDB schema and service-worker strategy are
+Phase 3 design work, not spec.
+
+## D-14 — Multi-location in scope; location is mandatory session context · *accepted*
+
+**Ruling:** **multiple warehouse locations are in scope** (closes Q-08). Location is **mandatory
+session context**, not an afterthought:
+
+- Every operator session is bound to a location; scans carry it.
+- **Bin names are prefixed with the location code** (e.g. `WH1-A-01-03`), so bin identity is unique
+  across locations.
+- The handheld **cache warms on location selection** — so **switching location requires
+  connectivity** (a deliberate, bounded exception to offline-first: you work offline *within* a
+  location, but changing location needs a connection to load the new location's master data).
+
+**Consequences (propagation pending, flagged):** location scoping touches the bin master naming
+convention (§3.3 / T-1.3 migration), the handheld login/location-select flow (T-3.4), the cache warm
+(T-3.2), wave/zone scoping (Phase 6), and genuine location-to-location Inventory Transfers (T-2.7,
+T-4.3) — which also intersects F-26 option (a). **Supersedes** the plan's implicit single-location
+assumption throughout.
+
+## D-15 — Delivery is an Account Customization Project, not a SuiteApp · *accepted*
+
+**Ruling:** deliver as an **Account Customization Project (ACP)**; scripts ship **open** (readable in
+the account). May be repackaged as a SuiteApp later via the UI if distribution is ever needed.
+Confirms AD-13's SDF direction and settles the project *type*. No supersession — it fills a gap the
+plan left open.
+
+## D-16 — Bin taxonomy and fulfilment eligibility · *accepted 2026-08-09 (closes Q-16)*
+
+**Ruling:** bin types are **UNIT, BULK, STAGE, RECEIVING, QUALITY, RETURN, DEFECT** (QC_HOLD renamed
+QUALITY; RETURN and DEFECT added). New policy attribute **`availableForFulfilment`** — **true for UNIT
+and BULK only**; stock in any other type is physically present but not pickable until moved into
+UNIT/BULK. Enforced in allocation (T-7.1), replenishment sourcing (T-5.2) and putaway routing (T-5.4);
+**not** filtered from reconciliation (T-8.3). **Surfaces F-26** (NetSuite over-commits non-fulfillable
+stock → Q-29). **Supersedes** AD-14's five-type table.
+
+## D-17 — Bin data migrates from a third-party application · *accepted 2026-08-09 (T-0.4 case b)*
+
+**Ruling:** bin definitions and contents live in a **third-party application today** and will be
+**migrated** into NetSuite (`customrecord_wms_bin` + opening `customrecord_wms_bin_state`). Phase 10 is
+therefore a **migration**, not greenfield slotting; it needs a **cutover point** (movement freeze or
+delta reconciliation, T-10.1 / T-13.3) because the export is stale on arrival. **Supersedes** the
+original T-0.4 ("audit `inventorybalance` grouped by bin"), which had no referent under D-07.
+
+## D-18 — NetSuite WMS SuiteApp is not installed; D-07 confirmed · *accepted 2026-08-09 (closes Q-13)*
+
+**Ruling:** Oracle's **NetSuite WMS SuiteApp is not installed** in the target account. It would have
+required Bin Management enabled and contradicted D-07 — so this **confirms D-07 is settled, not
+provisional.** T-0.1 keeps a general namespace-collision check on ACP-hygiene merits. **Supersedes**
+the provisional "D-07 contingent on Q-13" caveat.
+
+---
+
 ## Superseded
 
 | Item | Status |
@@ -395,7 +491,17 @@ layers stay.
 | Q-18, Q-19, Q-20 (tier/licensing questions) | **Closed by D-07** |
 | AD-16 (capability tier abstraction) | **Rewritten** as the NetSuite boundary |
 | `06-capability-tiers.md` | **Replaced** by `06-netsuite-boundary.md` |
-| F-02 (lock protocol on ingestion path) | **Reduced scope** — locks retained only for the commit stage; removed from ingestion |
+| F-02 (lock protocol) | **Withdrawn by D-12** — the lock was removed because the value-uniqueness primitive it required does not exist in NetSuite (earlier "reduced to commit stage" is itself superseded) |
 | F-05 (replenishment deadlock) | **Resolved by D-03** — no longer a live risk |
 | Q-03, Q-04, Q-14 | **Closed by D-03** |
-| AD-03, AD-05, AD-09 | **Rewritten** in `02-architecture.md` |
+| AD-03 | **Rewritten** in `02-architecture.md` (optimistic version check, not atomic CAS) |
+| **AD-04 (unique-field idempotency)** | **Superseded by D-12** — committer-side dedupe (group by UUID, keep first, rest `SUPERSEDED`) |
+| **AD-05 (concurrency lock protocol)** | **WITHDRAWN by D-12** — order lock redundant; bin lock replaced by single-threaded bin-state settlement; `customrecord_wms_concurrency_lock`, the stale-lock reaper and `STALE_LOCK`/`LOCK_TIMEOUT` deleted |
+| **AD-09 ("PWA cannot deliver persistence")** | **Corrected by D-13** — PWA delivers persistence via IndexedDB + `persist()`; residual risk accepted in writing |
+| **AD-14 (five bin types)** | **Extended by D-16** — seven types + `availableForFulfilment` |
+| **Q-08 (single vs multi location)** | **Closed by D-14** — multi-location in scope; location mandatory session context |
+| **Q-13 (WMS SuiteApp installed?)** | **Closed by D-18** — not installed; D-07 confirmed |
+| **Q-16 (bin types beyond UNIT/BULK)** | **Closed by D-16** |
+| **Q-10 (reserved stock occupies a bin?)** | **Closed 2026-08-09 — moot** — WMS tracks physical quantity only (no D-number: a scoping clarification, not a design ruling) |
+| **T-0.4 (audit inventorybalance by bin)** | **Superseded by D-17** — bin data migrates from a third-party app (case b) |
+| **T-0.6 / the whole lock subsystem** | **Superseded by D-12** — see AD-04, AD-05 rows |

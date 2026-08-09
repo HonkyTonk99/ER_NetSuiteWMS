@@ -172,12 +172,12 @@ jest harness with SuiteScript module stubs so pure logic is unit-testable.
 > - **AD-05 (locking) → withdrawn.** Replaced by **single-threaded bin-state settlement** (all
 >   bin-affecting commit work through one queue). `customrecord_wms_concurrency_lock` is **deleted.**
 >
-> ⚠️ **These consequences are NOT yet propagated to the spec.** AD-04, AD-05, invariant #3 & #7
-> (CLAUDE.md), `customrecord_wms_concurrency_lock` (§3.2), T-1.1, T-2.2, T-2.4, T-4.1/4.3/4.4, T-11.2
-> and the STALE_LOCK/LOCK_TIMEOUT exception types still describe the superseded design. The spike
-> below is retained for traceability; **propagation is pending a ruling to record this as a formal
-> decision (D-12) and rewrite those sites** — see the reconciliation report. Do not build T-1.1 until
-> that lands, since T-1.1 deploys the now-withdrawn lock record and unique-field constraint.
+> ✅ **Recorded as D-12 and propagated 2026-08-09.** AD-04 (→ committer dedupe), AD-05 (withdrawn),
+> CLAUDE.md invariants #3 & #7, `customrecord_wms_concurrency_lock` (§3.2, deleted), T-1.1, T-2.2
+> (deleted), T-2.4, T-4.1/4.3/4.4, T-11.2, T-12.3, F-02 and the STALE_LOCK/LOCK_TIMEOUT exception
+> types have all been updated. The spike below is retained for traceability only — **the answer is
+> already known (no value-uniqueness constraint); T-0.6 need not be run.** If run anyway, it should
+> *confirm* the finding.
 
 **Narrative**
 As the architect, I want the uniqueness assumption tested before two architecture decisions are
@@ -211,23 +211,26 @@ and whether it is catchable.
 
 # PHASE 1 — Data Model & Configuration
 
-### T-1.1 — Create scan event, lock and config records
-**Depends on:** T-0.5, T-0.6 · **Resolves:** F-08 · **Spec:** `03-data-model.md` §3.1, §3.2, §3.10
+### T-1.1 — Create scan event and config records
+**Depends on:** T-0.5 · **Resolves:** F-08 · **Spec:** `03-data-model.md` §3.1, §3.10 · *(rewritten per D-12 — lock record withdrawn, no unique constraint)*
 
 **Narrative**
-As a developer, I want the core custom records deployed with correct field types and uniqueness
-constraints, so that idempotency and locking are enforced by the database rather than by application
-code.
+As a developer, I want the core custom records deployed with correct field types, so that the ingestion
+and commit pipeline has its schema — with idempotency handled by the committer, not a database
+constraint NetSuite does not provide (D-12).
 
 **Requirement**
-Deploy `customrecord_wms_scan_event`, `customrecord_wms_concurrency_lock`, `customrecord_wms_config`
-exactly per §3.1/§3.2/§3.10 including all additions marked bold. `custrecord_se_event_id` and
-`custrecord_lock_resource_id` **must** be flagged unique. Seed the config record with agreed defaults.
-Create the composite search index supporting the M/R input search.
+Deploy `customrecord_wms_scan_event` and `customrecord_wms_config` exactly per §3.1/§3.10 including all
+additions marked bold. **No `customrecord_wms_concurrency_lock`** — withdrawn (D-12). **No unique
+constraint on `custrecord_se_event_id`** — NetSuite has none; idempotency is committer-side dedupe
+(AD-04). `custrecord_se_status` must include `SUPERSEDED` (the dedupe outcome). Seed the config record
+with agreed defaults. Create the composite search index `(status, type, location)` supporting the M/R
+input search, and ensure `custrecord_se_event_id` is **searchable** (for the committer's dedupe group),
+though not unique.
 
 **Acceptance**
-- [ ] GIVEN two records with the same `custrecord_se_event_id`, WHEN the second is saved, THEN NetSuite raises `UNIQUE_FIELD_VALUE_ALREADY_EXISTS`.
-- [ ] GIVEN two concurrent creates of the same `custrecord_lock_resource_id`, WHEN both are attempted, THEN exactly one succeeds.
+- [ ] GIVEN the deployed scan-event record, THEN every field in §3.1 exists with the specified type, `custrecord_se_status` includes `SUPERSEDED`, and `custrecord_se_event_id` is searchable.
+- [ ] GIVEN no lock record is deployed, THEN the project contains no `customrecord_wms_concurrency_lock` and no code references it (CI-greppable).
 - [ ] GIVEN the deployed config record, THEN every value listed in §3.10 is present and readable via the config module.
 
 ---
@@ -280,7 +283,7 @@ Deploy `customrecord_wms_bin` — the **bin master record** (§3.3), `customreco
 
 **Acceptance**
 - [ ] GIVEN each record, THEN every field in §3.3–§3.9 exists with the specified type and list values.
-- [ ] GIVEN `customrecord_wms_bin`, THEN `name` (bin code) is flagged unique and every field in §3.3 (`custrecord_wb_*`) is present with the specified type.
+- [ ] GIVEN `customrecord_wms_bin`, THEN every field in §3.3 (`custrecord_wb_*`) is present with the specified type, and `name` carries the location-code prefix (D-14); bin-code uniqueness is enforced by the migration/data-load (D-12 — no DB unique constraint), not a platform flag.
 - [ ] GIVEN the wave status list, THEN it contains exactly Pending, Picking, STAGED_FOR_PACKING, Packing, Complete, Cancelled, Exception — with no duplicate "Staged" value.
 - [ ] GIVEN a documented bin-master source with a named owner, WHEN the data load runs, THEN active bins exist in `customrecord_wms_bin` with location, type, policy, zone and pick sequence populated.
 
@@ -332,30 +335,18 @@ prohibition and the reason (F-01).
 
 ---
 
-### T-2.2 — `wms_lib_lock.js` — distributed lock *(commit stage only, per D-01)*
-**Depends on:** T-1.1 · **Resolves:** F-02 · **Implements:** AD-05
+### T-2.2 — ~~`wms_lib_lock.js` — distributed lock~~ **DELETED (D-12)**
+**Resolves:** F-02
 
-> **Scope reduced.** Locks are no longer used on the ingestion path — operator collision is not a
-> credible risk and the projection's version check covers it. This module serves the Map/Reduce
-> commit stage only, where parallel queues create a genuine machine-machine race.
-
-**Narrative**
-As a developer, I want a race-free lock primitive with ordering and TTL, so that concurrent commits
-against the same bin or order cannot interleave and corrupt inventory.
-
-**Requirement**
-`acquire(resourceType, resourceId, ttlSeconds)` attempts a create and treats
-`UNIQUE_FIELD_VALUE_ALREADY_EXISTS` as "not acquired"; exponential backoff with jitter, capped
-attempts. `release(lockId)` deletes, always callable from `finally`. `acquireAll(resources)` sorts by
-`(resourceTypeOrdinal, resourceId)` ascending before acquiring and releases in reverse on partial
-failure. `withLock(resources, fn)` wrapper. Scheduled reaper deletes expired locks and raises a
-STALE_LOCK exception per reaped lock.
-
-**Acceptance**
-- [ ] GIVEN two concurrent `acquire` calls for the same resource, WHEN both run, THEN exactly one returns a lock and the other returns not-acquired after backoff.
-- [ ] GIVEN `acquireAll` called with the same two resources in opposite argument order by two threads, WHEN both run, THEN neither deadlocks and both eventually complete.
-- [ ] GIVEN a lock older than its TTL, WHEN the reaper runs, THEN the lock is deleted and one STALE_LOCK exception record is created.
-- [ ] GIVEN `withLock` and a callback that throws, THEN the lock is released before the error propagates.
+> **This task is withdrawn.** A race-free lock needs "acquire = attempt a unique create", and NetSuite
+> has no value-uniqueness constraint (D-12). There is no lock module. The races it would have guarded
+> are removed structurally instead (AD-05, withdrawn):
+> - **Order commits** — serialised by AD-06 grouping + flipping events to `PROCESSING` on claim.
+> - **Bin-affecting commit work** — **single-threaded through one Map/Reduce queue** (single-threaded
+>   bin-state settlement, T-4.1/T-4.3).
+>
+> No `wms_lib_lock.js`, no `customrecord_wms_concurrency_lock`, no reaper (was T-11.2), no
+> `STALE_LOCK`/`LOCK_TIMEOUT`. Section retained as a tombstone.
 
 ---
 
@@ -427,21 +418,27 @@ always passes. `custrecord_wb_blocked` fails with a distinct code. Policy is a p
 ---
 
 ### T-2.4 — `wms_lib_idempotency.js` and event writer
-**Depends on:** T-1.1 · **Resolves:** F-08 · **Implements:** AD-04
+**Depends on:** T-1.1 · **Resolves:** F-08 · **Implements:** AD-04 · *(rewritten per D-12 — dedupe is committer-side, not a unique-field catch)*
 
 **Narrative**
 As a handheld operator on unreliable Wi-Fi, I want retrying a failed scan to be harmless, so that a
 dropped connection never double-counts a pick.
 
 **Requirement**
-`writeScanEvent(payload)` performs a direct create/save with no pre-read. Catch the unique violation
-and return `{status:'SUCCESS', idempotent:true, eventId:<existing>}`. Classify every other error as
-retryable or terminal and return `retryable` in the response so the client's queue can decide. Set
-server timestamp, preserve client timestamp, record device ID.
+NetSuite has no value-uniqueness constraint (D-12), so idempotency is **not** enforced at write time.
+`writeScanEvent(payload)` performs a direct create/save with **no pre-read and no unique-field
+reliance** — a retried UUID may create a second row, which is expected. Set server timestamp, preserve
+client timestamp, record device ID. Classify every error as retryable or terminal and return
+`retryable` so the client's queue can decide.
+
+**Dedupe belongs to the committer, not here.** The committer (T-4.1) groups by `custrecord_se_event_id`,
+keeps the earliest row, and marks the rest `SUPERSEDED` — so duplicate rows never become duplicate
+ledger postings. Provide `dedupeByEventId(events)` as the pure helper the committer calls (keep-first,
+return survivors + superseded ids); this is the unit-testable core.
 
 **Acceptance**
-- [ ] GIVEN the same UUID posted twice, WHEN both are processed, THEN exactly one scan event row exists and both responses report SUCCESS.
-- [ ] GIVEN the same UUID posted twice concurrently, WHEN both are processed, THEN exactly one row exists and neither request returns an error to the operator.
+- [ ] GIVEN the same UUID written twice (sequentially or concurrently), THEN both writes succeed with no error to the operator, and **at most one is ever posted** because the committer supersedes the rest.
+- [ ] GIVEN `dedupeByEventId` over events with duplicate UUIDs, THEN it returns exactly one survivor per UUID (the earliest) and the rest flagged `SUPERSEDED` — verified by unit test with no NetSuite account.
 - [ ] GIVEN the writer runs, WHEN governance usage is measured, THEN no saved search is executed on the success path.
 - [ ] GIVEN a transient platform error, THEN the response sets `retryable: true`; given a validation error, `retryable: false`.
 

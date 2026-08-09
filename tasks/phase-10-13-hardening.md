@@ -102,23 +102,23 @@ exception. Report rows archived and purged per run.
 
 ---
 
-### T-11.2 — Stale lock reaper and pipeline health monitor
-**Depends on:** T-2.2, T-4.6
+### T-11.2 — Pipeline health monitor
+**Depends on:** T-4.6 · *(stale-lock reaper removed per D-12 — no locks)*
 
 **Narrative**
-As an operations owner, I want orphaned locks and stalled pipelines cleared and surfaced
-automatically, so that a crashed script does not silently freeze a bin for the rest of the shift.
+As an operations owner, I want a stalled pipeline cleared and surfaced automatically, so that a
+crashed committer does not silently strand events for the rest of the shift.
 
 **Requirement**
-Scheduled job every 60 s: delete locks past `custrecord_lock_expires_at`, raise a STALE_LOCK
-exception for each; reset events stuck in PROCESSING beyond threshold back to PENDING; alert when
-PENDING depth or oldest-PENDING age breaches thresholds; alert when the M/R has not completed a run
-within its expected window.
+Scheduled job every 60 s: **reset events stuck in `PROCESSING` beyond a threshold back to `PENDING`**
+(a crashed committer leaves them claimed); alert when `PENDING` depth or oldest-`PENDING` age breaches
+thresholds; alert when the M/R has not completed a run within its expected window. **No lock reaper** —
+`customrecord_wms_concurrency_lock` was withdrawn (D-12); there are no orphaned locks to reap.
 
 **Acceptance**
-- [ ] GIVEN a lock past its TTL, WHEN the reaper runs, THEN it is deleted and a STALE_LOCK exception is created.
-- [ ] GIVEN an event stuck in PROCESSING beyond threshold, THEN it returns to PENDING and is reprocessed exactly once.
+- [ ] GIVEN an event stuck in PROCESSING beyond threshold, THEN it returns to PENDING and is reprocessed exactly once (dedupe by UUID guarantees no double posting).
 - [ ] GIVEN the backlog breaches threshold, THEN an alert reaches the named on-call owner.
+- [ ] GIVEN the monitor runs, THEN it references no lock record (none exists).
 
 ---
 
@@ -251,24 +251,24 @@ Targets, revised from Doc A §6 per F-07 and agreed with the sponsor before test
 ---
 
 ### T-12.3 — Concurrency and failure-injection testing
-**Depends on:** T-12.1 · **Resolves:** F-01, F-02, F-03
+**Depends on:** T-12.1 · **Resolves:** F-01, F-03 · *(lock/uniqueness cases removed per D-12)*
 
 **Narrative**
 As the architect, I want the race conditions the design is built to prevent deliberately provoked, so
 that we know the guards work rather than assuming they do.
 
 **Requirement**
-Targeted adversarial tests: two devices putting away different SKUs into the same empty bin
-simultaneously; the same UUID posted concurrently from two threads; opposing bin-to-bin transfers;
-network kill mid-POST followed by retry; M/R killed mid-reduce; cache poisoned with stale bin data;
-lock holder killed without release; a bin's contents changed between ingestion and commit.
+Targeted adversarial tests: the same UUID posted concurrently from two threads *(the committer must
+supersede all but one — this is the D-12 dedupe, replacing the old unique-constraint test)*; opposing
+bin-to-bin transfers on the single settlement queue; network kill mid-POST followed by retry; M/R
+killed mid-reduce; cache poisoned with stale bin data; a bin's contents changed between ingestion and
+commit. **No lock-holder-killed test** — there are no locks (D-12).
 
 **Acceptance**
-- [ ] GIVEN two simultaneous putaways of different SKUs to the same empty bin, THEN exactly one succeeds and the other produces a clean, actionable rejection.
-- [ ] GIVEN the same UUID posted from two threads at once, THEN exactly one event row exists.
-- [ ] GIVEN the M/R is killed mid-reduce, WHEN it restarts, THEN no event posts twice and none is stranded in PROCESSING.
+- [ ] GIVEN the same UUID posted from two threads at once, THEN duplicate rows may exist but **exactly one is ever posted** (the rest `SUPERSEDED`) — the dedupe guarantee, not a unique-row guarantee.
+- [ ] GIVEN opposing bin-to-bin transfers, THEN the single settlement queue serialises them with no interleaving and no deadlock.
+- [ ] GIVEN the M/R is killed mid-reduce, WHEN it restarts, THEN no event posts twice and none is stranded in PROCESSING (the health monitor, T-11.2, resets stragglers).
 - [ ] GIVEN deliberately stale cache data, THEN the commit-time authoritative check catches the conflict and no invalid inventory posts.
-- [ ] GIVEN a lock holder killed without release, THEN the reaper frees it within TTL and work resumes.
 
 ---
 
@@ -283,7 +283,7 @@ each release is verified rather than spot-checked.
 Automate the FRD's TC-BIN-01, TC-BIN-02, TC-REP-01, TC-WAV-01, TC-PCK-01, TC-CUS-01, plus the
 negative and edge cases the FRD omits: short pick, over pick, partial wave, cancelled order mid-wave,
 replenishment deadlock (F-05), multi-lot summary pick (F-06), duplicate pack click, tote rejection,
-lock timeout, governance yield, archive-then-audit-retrieval. Unit tests for all pure logic
+duplicate-UUID dedupe to `SUPERSEDED` (D-12), governance yield, archive-then-audit-retrieval. Unit tests for all pure logic
 (clustering, aggregation, similarity, allocation) with meaningful coverage.
 
 **Coverage (AD-16).** Every commit-path scenario runs against **PLAIN and LOT items, and against a
@@ -334,7 +334,7 @@ one without shadowing someone for a week.
 **Requirement**
 Role-based quick-reference cards (picker, packer, replenishment, supervisor). Supervisor runbook for
 the exception queue with a worked example of every resolution action. IT runbook: device
-provisioning, credential rotation, backlog alerts, pause/drain, stale locks. Train-the-trainer
+provisioning, credential rotation, backlog alerts, pause/drain, stuck-PROCESSING recovery. Train-the-trainer
 session. Laminated floor cards at each station.
 
 **Acceptance**

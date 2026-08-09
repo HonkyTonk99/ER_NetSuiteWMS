@@ -1,8 +1,19 @@
 # CLAUDE.md — Advanced Warehouse Management (NetSuite WMS)
 
-Read `docs/00-objective.md` first, then `docs/01-review-findings.md`, then
-`docs/02-architecture.md`. The architecture decisions **override** the sample code in the source FRD
-— that code contains known defects (F-12 … F-17) which must not be reproduced.
+Read `docs/00-objective.md` first, then **`docs/05-decisions-log.md`** (it is the current state of
+every ruling and overrides the findings and architecture docs), then `docs/06-netsuite-boundary.md`
+before any ledger code, then `docs/01-review-findings.md` and `docs/02-architecture.md`. The
+architecture decisions **override** the sample code in the source FRD — that code contains known
+defects (F-12 … F-17) which must not be reproduced.
+
+## Recording decisions (process — do not skip)
+
+**Every ruling gets a `D-number` in `docs/05-decisions-log.md` at the time it is made, and the
+corresponding register row in `docs/04-open-questions.md` cites it.** A ruling that exists only in a
+task file or a register row **has not been recorded.** The decisions log is the first thing a new
+session reads; if it is out of date, a withdrawn design gets rebuilt. When a ruling changes an
+architecture decision or invariant, propagate it in the same pass and add a row to the log's
+Superseded table.
 
 ## Non-negotiable invariants
 
@@ -17,18 +28,22 @@ version.*
 2. **Bin rules come from the bin's policy, never from a hardcoded type check.** No
    `if (binType === 'UNIT' || binType === 'BULK')` anywhere. Staging, receiving and QC bins are
    legitimately mixed-SKU. (F-18, AD-14)
-3. **Never perform a saved search on the ingestion success path.** Idempotency comes from the unique
-   index on `custrecord_se_event_id`, not from a lookup. Bin state is a record lookup by internal
-   ID. (F-08, AD-04)
+3. **Never perform a saved search on the ingestion success path.** NetSuite has **no value-uniqueness
+   constraint** (D-12), so idempotency is **not** a unique index — the ingestion RESTlet inserts the
+   scan event with no pre-read (a retry may create a duplicate row), and the **committer** dedupes by
+   `custrecord_se_event_id`: group by UUID, keep the first, mark the rest `SUPERSEDED`. The guarantee
+   is "no duplicate *ledger postings*". Bin state is a record lookup by internal ID. (F-08, AD-04, D-12)
 4. **Never call `record.transform` synchronously from a Suitelet or RESTlet.** All ledger writes go
    through the Map/Reduce committer. One `record.transform` per sales order, ever. (F-15, AD-01)
 5. **Never build a group key by string concatenation.** Handlers return key **objects**, serialised
    centrally. Enum values contain underscores. (F-12, AD-06, AD-15)
 6. **Never match fulfillment lines by item ID.** Use the SO line unique key, and aggregate all events
    for a line before touching the record. Unmatched lines get `itemreceive = false` explicitly. (F-14, AD-07)
-7. **Locks belong to the commit stage only.** Operator-to-operator collision is not a credible risk
-   on a directed floor; ingestion uses the projection's optimistic version check. Where locks *are*
-   used, acquire in `(resourceTypeOrdinal, resourceId)` order. (D-01, AD-05)
+7. **No distributed locks — they were withdrawn (D-12).** NetSuite has no value-uniqueness primitive
+   to build a race-free lock on, so `customrecord_wms_concurrency_lock` is deleted. Order work is
+   serialised by AD-06 grouping plus flipping events to `PROCESSING` on claim; **bin-affecting commit
+   work is single-threaded through one Map/Reduce queue** (single-threaded bin-state settlement).
+   Ingestion still takes no lock. (D-01, D-12; supersedes AD-05)
 8. **Never leave a failed event as just a log line.** Every FAILED event raises a
    `customrecord_wms_exception`. The operator already moved the stock. (F-04, AD-11)
 9. **Never hard-code a tuning value.** Thresholds, capacities, TTLs and batch sizes come from

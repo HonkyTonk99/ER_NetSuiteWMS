@@ -9,7 +9,7 @@ Merges the schemas from Doc A §3 and Doc B §4, plus additions required by the 
 
 | Field | Type | Notes |
 |---|---|---|
-| `custrecord_se_event_id` | Free-Form Text | Client UUID v4. **UNIQUE — this is the idempotency guard (AD-04)** |
+| `custrecord_se_event_id` | Free-Form Text | Client UUID v4. **Searchable, NOT unique** — NetSuite has no value-uniqueness constraint (D-12). Idempotency is committer-side dedupe by this field: keep first, mark rest `SUPERSEDED` (AD-04) |
 | `custrecord_se_type` | List/Record | PICK, PACK, REPLEN_MOVE, BIN_TRANSFER, COUNT, **SHORT_PICK, OVERRIDE, PUTAWAY, EXCEPTION, RECEIPT_PO, RECEIPT_TO, RECEIPT_WO** *(inbound added per D-09)* |
 | `custrecord_se_operator` | List/Record → Employee | |
 | `custrecord_se_wave` | List/Record → Wave Pick | |
@@ -34,19 +34,17 @@ Merges the schemas from Doc A §3 and Doc B §4, plus additions required by the 
 | **`custrecord_se_retry_count`** | Integer | |
 | **`custrecord_se_uom`** | List/Record | Only if UOM conversion is in scope (Q-07) |
 
-**Indexes:** `custrecord_se_event_id` unique; composite search index on `(status, type, location)`
-for the M/R input search — this table reaches ~350k rows at a 7-day retention.
+**Indexes:** `custrecord_se_event_id` **searchable but not unique** (D-12 — no platform uniqueness;
+dedupe is committer-side); composite search index on `(status, type, location)` for the M/R input
+search — this table reaches ~350k rows at a 7-day retention.
 
-## 3.2 `customrecord_wms_concurrency_lock`
+## 3.2 `customrecord_wms_concurrency_lock` — **DELETED (D-12)**
 
-| Field | Type | Notes |
-|---|---|---|
-| `custrecord_lock_resource_type` | List/Record | BIN, ORDER, LOT, **WAVE**. When `BIN`, `custrecord_lock_resource_id` holds a `customrecord_wms_bin` internal ID |
-| `custrecord_lock_resource_id` | Free-Form Text | **UNIQUE — the acquire mechanism (AD-05)** |
-| `custrecord_lock_acquired_by` | List/Record → Employee | |
-| `custrecord_lock_acquired_time` | Date/Time | |
-| **`custrecord_lock_expires_at`** | Date/Time | Reaper target |
-| **`custrecord_lock_context`** | Free-Form Text | Script + deployment holding it, for diagnostics |
+**This record is withdrawn.** The lock protocol required a race-free "acquire = attempt a unique
+create" primitive, and NetSuite has no value-uniqueness constraint to provide it (D-12). Order commits
+are serialised by AD-06 grouping + `PROCESSING` claiming; bin-affecting commit work is single-threaded
+through one Map/Reduce queue (AD-05, withdrawn). No lock record, no reaper, no `STALE_LOCK` /
+`LOCK_TIMEOUT` exception types. Section retained as a tombstone so the deletion is traceable.
 
 ## 3.2b `customrecord_wms_bin_state` — **new (AD-03, per D-01)**
 
@@ -55,7 +53,7 @@ One row per bin. Viable as a single tiny record precisely because of the 1-SKU/1
 
 | Field | Type | Notes |
 |---|---|---|
-| `custrecord_bs_bin` | List/Record → `customrecord_wms_bin` | **UNIQUE** — one state row per bin |
+| `custrecord_bs_bin` | List/Record → `customrecord_wms_bin` | One state row per bin. Uniqueness is **not** a DB constraint (D-12) — enforced by the module always upserting bin state **by bin internal ID** (read-then-write, single settlement queue), never blind-creating |
 | `custrecord_bs_item` | List/Record → Item | Current SKU, empty when bin is empty |
 | `custrecord_bs_lot` | Free-Form Text | Current batch, empty when bin is empty |
 | `custrecord_bs_qty` | Decimal | Current physical quantity |
@@ -84,7 +82,7 @@ this section was a leftover from before that ruling. The WMS owns the bin master
 
 | Field | Type | Notes |
 |---|---|---|
-| `name` | Text | Bin code, e.g. `A-01-03`. **UNIQUE** |
+| `name` | Text | Bin code **prefixed with the location code** (D-14), e.g. `WH1-A-01-03`, so codes are unique across locations. Uniqueness is enforced at **migration/data-load** and by the prefix convention, **not** a DB constraint (D-12, no platform uniqueness) |
 | `custrecord_wb_location` | List/Record → Location | NetSuite location the bin physically sits in |
 | `custrecord_wb_type` | List/Record | **UNIT, BULK, STAGE, RECEIVING, QUALITY, RETURN, DEFECT** (AD-14 / F-18; Q-16 closed 2026-08-09) |
 | `custrecord_wb_policy` | List/Record → `customrecord_wms_bin_policy` | Carries `singleSku`, `singleBatch`, `allowDirectPick`, `replenTarget` (AD-14) — validation loads policy, never a hardcoded type check (invariant #2) |
@@ -159,7 +157,7 @@ Implied by Doc B §2.2 but never defined as a record. Explicit here.
 | Field | Type |
 |---|---|
 | `custrecord_exc_source_event` | List/Record → Scan Event |
-| `custrecord_exc_type` | INVARIANT_VIOLATION, POST_FAILURE, SHORT_PICK, OVER_PICK, LOCK_TIMEOUT, RECONCILIATION_DRIFT, REPLEN_BLOCKED, STALE_LOCK, **UNATTRIBUTED_MOVEMENT, OVER_RECEIPT, RECEIPT_DISCREPANCY, NO_PUTAWAY_LOCATION, MISSING_LOT_DATA, SERIALISED_ITEM_OUT_OF_SCOPE, PO_LINE_MISMATCH, CLOSED_PERIOD_POSTING, COMMITMENT_EXCEEDED, DEFERRAL_TIMEOUT, NEGATIVE_BIN_STATE** |
+| `custrecord_exc_type` | INVARIANT_VIOLATION, POST_FAILURE, SHORT_PICK, OVER_PICK, RECONCILIATION_DRIFT, REPLEN_BLOCKED, **UNATTRIBUTED_MOVEMENT, OVER_RECEIPT, RECEIPT_DISCREPANCY, NO_PUTAWAY_LOCATION, MISSING_LOT_DATA, SERIALISED_ITEM_OUT_OF_SCOPE, PO_LINE_MISMATCH, CLOSED_PERIOD_POSTING, COMMITMENT_EXCEEDED, DEFERRAL_TIMEOUT, NEGATIVE_BIN_STATE** *(LOCK_TIMEOUT, STALE_LOCK removed — locks withdrawn, D-12)* |
 | `custrecord_exc_severity` | LOW, MEDIUM, HIGH, CRITICAL |
 | `custrecord_exc_status` | OPEN, IN_PROGRESS, RESOLVED, WRITTEN_OFF |
 | `custrecord_exc_assigned_to` | List/Record → Employee |
