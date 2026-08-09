@@ -57,9 +57,10 @@ account-dependent step and is not part of `npm ci`.
 │   ├── 02-architecture.md
 │   ├── 03-data-model.md
 │   ├── 04-open-questions.md
-│   ├── 05-decisions-log.md
+│   ├── 05-decisions-log.md       # READ EARLY — current state of every ruling (D-01…D-18)
 │   ├── 06-netsuite-boundary.md
-│   └── delivery-plan.md
+│   ├── delivery-plan.md
+│   └── phase-0-intake/           # Fillable intake forms for T-0.1 / T-0.3 / T-0.4
 ├── tasks/                    # Task backlog with Given/When/Then acceptance criteria
 │   ├── phase-0-2-foundation.md
 │   ├── phase-3-5-engine.md
