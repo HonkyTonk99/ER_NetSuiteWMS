@@ -212,10 +212,18 @@ NetSuite has no concept of a bin (D-07) and the stock has not changed location, 
 financial event. The commit updates WMS bin state only. `inventoryadjustment` is used solely for
 count variances, through the adapter, with a documented adjustment account.
 
+**Non-fulfillable bins reached via this flow (Q-16, release 1).** Stock reaches RETURN, QUALITY and
+DEFECT bins through the **generic bin-transfer flow** — an operator moves stock out of UNIT/BULK and
+it becomes non-fulfillable. That is already in scope here; nothing extra to build. *(Structured RMA
+receipt — receiving a customer return against an RMA document with disposition rules — is deferred to
+release 2, Q-05.)* Like any bin move it posts nothing to NetSuite; the only effect is that the stock
+now sits in a bin with `availableForFulfilment: false`.
+
 **Acceptance**
 - [ ] GIVEN move events across two locations, WHEN the M/R runs, THEN separate Bin Transfers are created per location and each saves successfully.
 - [ ] GIVEN a bin transfer, WHEN inspected, THEN the `location` field holds a Location internal ID.
 - [ ] GIVEN any move event, WHEN it commits, THEN the WMS projection updates, **no NetSuite transaction is created**, and the event is marked POSTED rather than FAILED.
+- [ ] GIVEN a bin transfer targeting a non-fulfillable bin type (RETURN/QUALITY/DEFECT), THEN the transfer **succeeds** and the moved stock is thereafter **excluded from allocation (T-7.1) and replenishment sourcing (T-5.2)**.
 - [ ] GIVEN a target bin whose contents changed after ingestion, WHEN commit re-asserts the invariant, THEN the transfer is rejected and an INVARIANT_VIOLATION exception is raised naming the conflict.
 - [ ] GIVEN two threads transferring between the same two bins in opposite directions, THEN neither deadlocks.
 

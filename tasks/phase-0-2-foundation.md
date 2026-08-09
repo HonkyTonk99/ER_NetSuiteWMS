@@ -19,11 +19,12 @@ model is sized on a real number.
 *Boundary confirmation.* Verify via `runtime.isFeatureInEffect`: **Bin Management is OFF** (basic
 and advanced) and will remain off — this is a standing assumption, not a snapshot; `MULTILOCINVT`
 state and location count; `LOTNUMBEREDINVENTORY` and `SERIALIZEDINVENTORY`; Multiple UOM (Q-07).
-Record whether the NetSuite WMS SuiteApp is installed (Q-13). ⚠️ **This is a foundation check, not
-housekeeping:** the Oracle NetSuite WMS SuiteApp **requires Bin Management enabled**, which **directly
-contradicts D-07.** If it is installed and cannot be removed, D-07 is not viable as written and the
-NetSuite boundary (`06-netsuite-boundary.md`) must be re-opened before any ledger code. Confirm it is
-absent, or plan its removal, or escalate.
+*Namespace-collision check.* Q-13 is **closed (2026-08-09): the NetSuite WMS SuiteApp is not
+installed**, so D-07 is confirmed. The check that survives — and it stands on its own merits for an
+Account Customization Project — is **namespace collision**: verify no existing customization,
+managed bundle or SuiteApp owns `customrecord_wms_*`, `custrecord_*` or `wms_*` script IDs that would
+clash with what this project deploys. A clean namespace is a precondition for a repeatable SDF deploy
+with no manual account reconciliation.
 
 *Item census.* For every in-scope item, classify as **PLAIN** or **LOT** and report by item count
 and by share of order lines. Serial is out of scope (D-08), so the census has a second purpose:
@@ -43,7 +44,7 @@ Do confirm the **accounting period calendar and close cadence**, which the perio
 - [ ] GIVEN the item master, WHEN the census runs, THEN PLAIN and LOT counts are reported by item **and** by order-line share.
 - [ ] GIVEN any serialised item in a WMS-managed location, THEN it is listed and a decision to exclude or re-configure it is recorded before Phase 1.
 - [ ] GIVEN the account, THEN the accounting period calendar and close cadence are recorded for T-11.4.
-- [ ] GIVEN the NetSuite WMS SuiteApp is installed, THEN it is escalated as a D-07 contradiction (it requires Bin Management) and a removal-or-reopen-the-boundary decision is recorded before Phase 1.
+- [ ] GIVEN the account, THEN the NetSuite WMS SuiteApp is confirmed **not installed** (Q-13) and no existing customization collides with the `customrecord_wms_*` / `wms_*` namespace.
 - [ ] GIVEN the audit, THEN SuiteCloud Plus licence count and current concurrency limit are recorded for T-0.2.
 
 ---
@@ -161,6 +162,22 @@ jest harness with SuiteScript module stubs so pure logic is unit-testable.
 
 ### T-0.6 — Spike: prove or disprove atomic field uniqueness
 **Depends on:** T-0.5 · **Gates:** T-1.1 · **De-risks:** AD-04, AD-05 · *(new 2026-08-09 — Critique 1)*
+
+> **ANSWERED 2026-08-09 — DISPROVEN.** Sponsor ruling: **NetSuite has no value-uniqueness constraint**
+> (field "unique" is application-layer, not a DB constraint, and is not atomic under concurrent
+> saves). Consequences ruled:
+> - **AD-04 (idempotency) → committer-side dedupe.** Group scan events by UUID in the committer, keep
+>   the first, mark the rest `SUPERSEDED`. The guarantee is "no duplicate *ledger postings*", not "no
+>   duplicate rows".
+> - **AD-05 (locking) → withdrawn.** Replaced by **single-threaded bin-state settlement** (all
+>   bin-affecting commit work through one queue). `customrecord_wms_concurrency_lock` is **deleted.**
+>
+> ⚠️ **These consequences are NOT yet propagated to the spec.** AD-04, AD-05, invariant #3 & #7
+> (CLAUDE.md), `customrecord_wms_concurrency_lock` (§3.2), T-1.1, T-2.2, T-2.4, T-4.1/4.3/4.4, T-11.2
+> and the STALE_LOCK/LOCK_TIMEOUT exception types still describe the superseded design. The spike
+> below is retained for traceability; **propagation is pending a ruling to record this as a formal
+> decision (D-12) and rewrite those sites** — see the reconciliation report. Do not build T-1.1 until
+> that lands, since T-1.1 deploys the now-withdrawn lock record and unique-field constraint.
 
 **Narrative**
 As the architect, I want the uniqueness assumption tested before two architecture decisions are

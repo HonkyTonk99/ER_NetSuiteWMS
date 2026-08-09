@@ -15,18 +15,28 @@ phase is scheduled** — they are not "we'll work it out in the sprint" question
 > inventory is permitted in the WMS and forbidden in NetSuite. **Closes Q-24 and Q-26.**
 >
 > **Updated 2026-08-09.** **Closed:** Q-16 (bin types + `availableForFulfilment`; new finding F-26) ·
-> Q-10 (moot — WMS tracks physical quantity only). **T-0.4 answered:** case (b), bin data migrates
-> from a third-party app. **Q-13 escalated** to ⚠️ potentially foundation-breaking — the NetSuite WMS
-> SuiteApp requires Bin Management, which contradicts D-07; **D-07 is not settled until Q-13 is
-> answered.**
+> Q-10 (moot — WMS tracks physical quantity only) · **Q-13** (NetSuite WMS SuiteApp not installed —
+> **D-07 confirmed, not provisional**) · **Q-01** (handheld = responsive PWA, Android-first, served
+> from NetSuite; iOS out of scope — *overrides the native-app recommendation; AD-09 needs revisiting*).
+> **T-0.4 answered:** case (b), bin data migrates from a third-party app. **T-0.6 answered** (no
+> value-uniqueness constraint in NetSuite) — but its architectural consequences (AD-04 →
+> committer-side dedupe; AD-05 → single-threaded settlement; `customrecord_wms_concurrency_lock`
+> deleted) are **not yet propagated to the spec or the decisions log** — see reconciliation note below.
 >
-> **One hard blocker remains: Q-01 (handheld platform).** Nothing else gates a phase start —
-> Q-17, Q-25 and Q-27 are needed during their phases rather than before them. **Q-13 is not a phase
-> gate but a foundation check** — it must be confirmed in T-0.1 before ledger code is written.
+> **No hard blocker remains for a phase *start*.** Q-02, Q-06, Q-07, Q-08, Q-09, Q-11, Q-12, Q-17,
+> Q-25, Q-27 are needed *during* their phases; Q-05 residual (cycle counting / structured RMA) is a
+> release-scope call. **Phase 1 gates on T-0.3 closing this register with owners + dates**, and on
+> the T-0.6 propagation being ruled (it rewrites AD-04/AD-05, which T-1.1 deploys).
+>
+> ⚠️ **Reconciliation note (2026-08-09).** The **T-0.6 architectural ruling is recorded nowhere
+> authoritative** — not as a `D-xx` in `05-decisions-log.md`, not in the spec. It withdraws AD-05
+> (locking) entirely and changes AD-04 (idempotency). Until it is formalised and propagated, the spec
+> still describes the superseded lock/unique-field design in ~12 places. Recommend recording it as a
+> formal decision (D-12) and propagating before Phase 1.
 
 | ID | Question | Why it matters | Blocks | Recommendation | Owner | Decision |
 |---|---|---|---|---|---|---|
-| **Q-01** | What is the handheld platform? Rugged Android (Zebra/Honeywell), consumer Android/iOS, or browser-based? Native app, PWA, or NetSuite mobile? | **Largest unspecified work item in the programme.** Determines whether the optimistic-UI + durable-queue design of AD-09 is even buildable. A browser-based client cannot reliably persist a queue across a battery pull. | Phase 3 | Native or hybrid app on rugged Android with a hardware scan trigger. Consumer devices in a warehouse are a false economy. | | |
+| ~~Q-01~~ | **CLOSED 2026-08-09.** Handheld is a **responsive PWA, Android-first, served from NetSuite; iOS out of scope.** ⚠️ *This overrides the plan's recommendation of a native app and runs against AD-09's stated position that a browser/PWA client cannot dependably deliver durable offline persistence and background sync on rugged Android — AD-09, T-3.2 (durable queue), T-3.4 (client) and T-3.5 (reconnect) must be revisited to a PWA delivery (IndexedDB + Service Worker / Background Sync), with the residual offline-durability risk accepted or mitigated in writing.* | Phase 3 | *(superseded by the ruling above)* | TK | **Closed** |
 | **Q-02** | RESTlet authentication: Token-Based Auth or OAuth 2.0 machine-to-machine? Per-device or shared credentials? | Determines device provisioning and whether a lost handheld can be revoked without touching the other 49. | Phase 3 | Per-device TBA tokens. Shared credentials are not revocable in any useful sense. | | |
 | ~~Q-03~~ | **CLOSED 2026-08-07 (D-03).** No bulk → picking consumes available bin batches directly, FEFO; when exhausted the SKU is out of stock. No blocked task, no escalation. | — | — | — | TK | **Closed** |
 | ~~Q-04~~ | **CLOSED 2026-08-07 (D-03).** One bin = one batch, so demand spanning bins spans batches. Summary picking is one task per SKU **per bin**. FEFO across bins; orders may split across batches. | — | — | — | TK | **Closed** |
@@ -38,7 +48,7 @@ phase is scheduled** — they are not "we'll work it out in the sprint" question
 | ~~Q-10~~ | **CLOSED 2026-08-09 — moot.** WMS bin state tracks **physical** quantity only and never sees NetSuite's available/committed split. A bin holding committed stock is **occupied**, because the stock is physically there. There is no reserved-but-not-available dimension in the WMS to test against. | — | — | — | TK | **Closed** |
 | **Q-11** | What is the partial-fulfilment policy on an unresolvable short pick — ship partial, hold the order, or backorder? | Drives T-7.4 behaviour and has direct customer-experience consequences. | T-7.4 | Confirm with customer service; likely varies by customer or order type. | | |
 | **Q-12** | Cart/tote capacity — how many order positions does a pick cart hold? | Hard cap on wave cluster size (AD-10). Without it, clustering can produce a wave no picker can physically carry. | Phase 6 | Measure the actual carts. | | |
-| **Q-13** | ⚠️ **POTENTIALLY FOUNDATION-BREAKING.** Is the Oracle NetSuite WMS SuiteApp installed in the target account? | Beyond colliding bin/wave/task records: the NetSuite WMS SuiteApp **requires Bin Management enabled**, which **directly contradicts D-07** (bins off, WMS owns bins). If it is installed and cannot be removed, D-07 is not viable as written and the boundary must be re-opened. **Do not treat D-07 as settled until this is answered.** | T-0.1, **D-07** | Confirm not installed, or plan its removal, before Phase 1. If it cannot be removed, escalate — this reopens the NetSuite boundary. | | |
+| ~~Q-13~~ | **CLOSED 2026-08-09.** The Oracle NetSuite WMS SuiteApp is **not installed** in the target account. It would have required Bin Management enabled, contradicting D-07 — so this confirms **D-07 is settled, not provisional.** T-0.1 retains a general namespace-collision check on its own merits (ACP hygiene). | — | — | — | TK | **Closed** |
 | ~~Q-14~~ | **CLOSED 2026-08-07 (D-03).** Direct picking from non-pick-face bins is permitted. Allocation prefers the UNIT pick face, then falls through to any bin holding the SKU. | — | — | — | TK | **Closed** |
 | ~~Q-15~~ | **CLOSED 2026-08-08 (D-09).** Lot expiry is captured at receipt on the handheld (T-5.5), so FEFO data is created correctly at source rather than needing a back-fill. Existing stock still needs a one-off check during Phase 10 remediation. | — | — | — | TK | **Closed** |
 | ~~Q-18~~ | **CLOSED 2026-08-08 (D-07).** Lot recall traceability: LOT items post lot detail to NetSuite normally, so standard lot traceability is intact wherever items are lot-numbered. The exposure was a consequence of the tier model, which no longer exists. *(Traceability of **which bin** remains WMS-only — but that was never a regulatory question.)* | — | — | — | TK | **Closed** |
