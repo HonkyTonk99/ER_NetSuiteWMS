@@ -241,7 +241,7 @@ and a rising rate means ingestion and commit are seeing different worlds.
 - [ ] GIVEN a successful post, THEN `pending_delta` is cleared and `last_reconciled` is stamped for every affected bin.
 - [ ] GIVEN the reconciliation, THEN it executes inside a held bin lock (assertion in DEV builds).
 - [ ] GIVEN a run, THEN the commit-stage rejection count is written to the metric snapshot.
-- [ ] GIVEN a fully drained queue, THEN projection quantity equals `inventorybalance` for every bin.
+- [ ] GIVEN a fully drained queue, THEN the summed WMS bin quantity equals NetSuite quantity on hand for every item and location — additionally per lot for LOT items (reconciliation is item/location grain; NetSuite has no bin dimension).
 
 ---
 

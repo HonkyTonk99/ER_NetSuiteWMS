@@ -69,7 +69,7 @@ that clustering translates into actual walking-distance savings.
 
 **Requirement**
 Supervisor Suitelet: review Pending waves, adjust, assign a picker, release. On release, generate
-pick tasks sorted by `custrecord_wms_bin_pick_sequence` within zone — this is what delivers the
+pick tasks sorted by `custrecord_wb_pick_sequence` within zone — this is what delivers the
 FRD's promised "optimise walk sequences", which nothing in the source document actually implements.
 Wave status Pending → Picking on release.
 

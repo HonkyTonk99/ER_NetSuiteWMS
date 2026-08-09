@@ -113,6 +113,10 @@ nice-to-have** (Phase 8).
   carried as Phase 3 with its own decision gate.
 - That existing bin data is compliant. Single-SKU/single-batch is a hard invariant; if today's
   inventory has mixed bins, day-1 go-live is blocked until remediated (Phase 10).
+  > **Pending T-0.4 (asymmetric).** This assumes bins *exist* today and merely need cleaning up. T-0.4
+  > tests that: if it returns case (a) NOWHERE or (c) PHYSICAL ONLY, there is no bin data to remediate
+  > and Phase 10 becomes **initial slotting of the whole warehouse** — a materially larger, mostly
+  > physical job that is probably the programme's critical path. The estimate moves one way: up.
 - That the sample code in the FRD is production-intended. It reads as illustrative pseudo-code —
   there are several defects in it (`01-review-findings.md`), which is normal for an FRD and not a
   criticism of the document.

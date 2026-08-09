@@ -7,6 +7,13 @@
 *Cannot be skipped. If today's bins are non-compliant, the invariant fails on day 1 and every
 downstream feature misbehaves.*
 
+> **Pending T-0.4 (asymmetric — the phase title assumes the cheap case).** "Remediation" assumes bins
+> exist today and need cleaning up (T-0.4 case (b)). If T-0.4 returns case (a) NOWHERE or (c) PHYSICAL
+> ONLY, this is not remediation at all but **initial slotting of the whole warehouse** — design the
+> bin scheme, create the bin master, label racks physically, first putaway. That is a materially
+> larger, mostly physical job and **probably the programme's critical path**. The estimate only moves
+> up. T-10.1 is flagged accordingly; re-scope this phase once T-0.4 selects the case.
+
 ### T-10.1 — Remediation plan and re-slotting tooling
 **Depends on:** T-0.4, T-1.3
 
@@ -26,7 +33,7 @@ the floor can be made ready without stopping shipping.
 From the T-0.4 audit, produce a remediation plan: which bins split, which SKUs move where, new bins
 required, sequencing by velocity (fastest movers first), and labour estimate. Build a saved search
 and a supervisor screen tracking progress. Provide directed move tasks on the handheld reusing the
-Phase 5 execution flow. Bins under remediation are marked `custrecord_wms_bin_blocked`.
+Phase 5 execution flow. Bins under remediation are marked `custrecord_wb_blocked`.
 
 **Acceptance**
 - [ ] GIVEN the audit, THEN a per-bin remediation plan with target bins and sequencing exists and is signed off by the warehouse manager.

@@ -339,9 +339,16 @@ that I am never told a visibly empty bin is occupied because the ledger has not 
 Maintain `customrecord_wms_bin_state` as the operational truth of bin contents, including
 accepted-but-unposted events. `read(binId)` is a **single record lookup by internal ID, never a
 search** — this is the hottest read in the system. `apply(binId, delta, eventId)` performs a
-compare-and-set on `custrecord_bs_version`; on version mismatch, re-read and re-evaluate **once**,
-then proceed (no locking, no blocking — collisions are rare per D-01). `reconcile(binId)` compares
-projection to `inventorybalance` and reports divergence.
+**read-check-write** on `custrecord_bs_version` (optimistic version check — *not* an atomic
+compare-and-set, which SuiteScript does not offer; the lost-update window is bounded and accepted per
+AD-03); on version mismatch, re-read and re-evaluate **once**, then proceed (no locking, no blocking —
+collisions are rare per D-01).
+
+`reconcile(itemId, locationId)` — **not `reconcile(binId)`**: NetSuite has no bin dimension, so a
+single bin has nothing to reconcile against. Reconciliation is at **item/location grain** — sum the
+WMS bin quantities for that item and location, compare to NetSuite quantity on hand, **additionally
+per lot for LOT items** — and report divergence (per `06-netsuite-boundary.md` §4, the same contract
+as T-8.3).
 
 **Negative quantity is permitted (D-11)** — the floor is allowed to be ahead of the books, and
 blocking a picker because the queue has not drained would defeat the whole architecture. But it is
@@ -353,8 +360,8 @@ the next putaway of any SKU is accepted.
 - [ ] GIVEN a pick empties a bin, WHEN a putaway of a different SKU is validated 2 minutes later and before the ledger has posted, THEN it is **accepted** — the false-rejection case in F-01 does not occur.
 - [ ] GIVEN a bin state read, WHEN governance is measured, THEN it consumes a record lookup and no saved search.
 - [ ] GIVEN a version mismatch on apply, THEN the module re-reads once and completes without blocking or erroring.
-- [ ] GIVEN a drained event queue, WHEN reconcile runs against `inventorybalance`, THEN projection and ledger agree for every bin.
-- [ ] GIVEN persistent divergence for a bin, THEN it is reported for exception handling rather than silently corrected.
+- [ ] GIVEN a drained event queue, WHEN `reconcile(itemId, locationId)` runs, THEN the summed WMS bin quantity equals NetSuite quantity on hand for that item and location — additionally per lot for LOT items.
+- [ ] GIVEN persistent divergence for an item/location, THEN it is reported for exception handling rather than silently corrected.
 - [ ] GIVEN a pick that drives bin quantity negative, THEN the update succeeds and the operator is not blocked.
 - [ ] GIVEN a bin negative beyond the configured magnitude or age threshold, THEN a `NEGATIVE_BIN_STATE` exception is raised.
 
@@ -373,7 +380,7 @@ staging area.
 against the projection from T-2.3. **One code path for all bin types** — no `if (binType === 'UNIT'
 || binType === 'BULK')` anywhere in the codebase. Throws
 `ERR_WMS_BIN_CONSTRAINT_VIOLATION` naming the bin, conflicting item and conflicting lot. Empty bin
-always passes. `custrecord_wms_bin_blocked` fails with a distinct code. Policy is a pure function of
+always passes. `custrecord_wb_blocked` fails with a distinct code. Policy is a pure function of
 `(policy, currentState, proposedItem, proposedLot)` — fully unit-testable with no NetSuite account.
 
 **Acceptance**

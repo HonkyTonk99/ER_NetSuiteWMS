@@ -288,7 +288,7 @@ Each of these is either a task in the plan or an open question. None of them can
 | **Returns / RMA putaway** | Not mentioned; lot + bin isolation implications | Q-05 |
 | **Packing label / packing slip printing** | §2.4 "triggers packing label generation" — no printer integration spec | `T-7.5`, Q-06 |
 | **UOM conversion** | Cache holds base UOM + conversion factors; nothing uses them. Do pickers scan eaches against case-UOM orders? | Q-07 |
-| **Bin data remediation** | If current bins are mixed-SKU, go-live is blocked | Phase 10 |
+| **Bin data remediation** | If current bins are mixed-SKU, go-live is blocked. **Pending T-0.4 (asymmetric):** this assumes bins exist today; if T-0.4 returns case (a)/(c) there is nothing to remediate and Phase 10 becomes initial slotting of the whole warehouse — larger, mostly physical, likely the critical path | Phase 10 |
 | **Security roles & permissions** | Picker/packer/supervisor role design absent | `T-1.4` |
 | **Multi-location / multi-subsidiary** | Every flow implicitly single-location | Q-08 |
 | **Event archiving retention** | 7-day purge stated; audit/compliance requirement unconfirmed | `T-11.1`, Q-09 |
