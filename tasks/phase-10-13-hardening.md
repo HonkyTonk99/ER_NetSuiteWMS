@@ -10,6 +10,14 @@ downstream feature misbehaves.*
 ### T-10.1 — Remediation plan and re-slotting tooling
 **Depends on:** T-0.4, T-1.3
 
+> ⚠️ **Scope pending T-0.4 outcome (flagged 2026-08-09, not yet rewritten).** This task as written
+> assumes existing non-compliant bins to split ("which bins split, which SKUs move where"). That holds
+> only in T-0.4 **case (b)** — bin data already exists in another system. Under **case (a) NOWHERE**
+> or **case (c) PHYSICAL ONLY**, there is nothing to remediate: this task becomes *design the bin
+> scheme, create the bin master (`customrecord_wms_bin`), label the racks physically, and perform
+> first putaway* — initial slotting, not remediation, with a different critical-path position. **Do
+> not build to the text below until T-0.4 selects the case.** Left unrewritten deliberately.
+
 **Narrative**
 As a warehouse manager, I want a worked plan for splitting mixed bins into compliant ones, so that
 the floor can be made ready without stopping shipping.

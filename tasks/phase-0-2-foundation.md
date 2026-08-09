@@ -97,23 +97,34 @@ Q-17 offline duration, Q-25 manufacturing transaction type, Q-27 over-receipt to
 
 ---
 
-### T-0.4 — Audit current bin data for invariant compliance
-**Depends on:** T-0.1 · **Feeds:** Phase 10
+### T-0.4 — Establish where bin data lives today, and what state it is in
+**Depends on:** T-0.1 · **Feeds:** Phase 10, T-1.3 · *(rewritten 2026-08-09 — the original "audit inventorybalance grouped by bin" assumed a NetSuite bin dimension that D-07 removed; there may be nothing to audit)*
 
 **Narrative**
-As the warehouse manager, I want to know how much of today's inventory violates the single-SKU /
-single-batch rule, so that we can size the physical remediation work before committing to a go-live
-date.
+As the delivery lead, I want to know whether bin location data exists anywhere today, so that Phase 10
+can be scoped as cleanup, migration, or greenfield slotting.
 
 **Requirement**
-Saved search over `inventorybalance` grouped by bin, counting distinct items and distinct inventory
-numbers per bin where available > 0. Classify each bin: compliant, multi-SKU, multi-lot, both.
-Quantify affected bins, SKUs, units and estimated re-slotting labour hours.
+The original task audited `inventorybalance` grouped by bin for single-SKU/single-batch compliance.
+Under D-07 that question may have **no referent**: NetSuite has no bins, and the WMS does not exist
+yet — so unless bins live in a third system, there is nothing to audit because there are no bins.
+This is discovery of the **source of truth**, not a compliance audit. Determine which case applies:
+
+- **(a) NOWHERE** — stock is tracked at location level only; physical position is tribal knowledge.
+  Phase 10 becomes **initial slotting**, not remediation.
+- **(b) ANOTHER SYSTEM** — a legacy WMS or spreadsheet holds bin assignments. Audit that export for
+  single-SKU/single-batch compliance and assess it as a **migration**.
+- **(c) PHYSICAL ONLY** — racks are labelled but no system holds the mapping. Requires a **floor
+  survey** to capture the bin master.
+
+Then quantify: number of bins (existing or required), SKUs affected, units to move, and estimated
+labour hours.
 
 **Acceptance**
-- [ ] GIVEN live inventory, WHEN the audit runs, THEN a report gives counts of non-compliant bins by violation type with unit and SKU volumes.
-- [ ] GIVEN the report, THEN an estimated remediation effort in labour hours and an earliest-possible compliant date are stated.
-- [ ] GIVEN non-compliance exists, THEN go-live planning explicitly depends on Phase 10 completing.
+- [ ] GIVEN the discovery, THEN the applicable case (a/b/c) is recorded with evidence.
+- [ ] GIVEN case (a) or (c), THEN Phase 10 is re-scoped as initial slotting, re-estimated, and its position in the critical path is re-assessed.
+- [ ] GIVEN case (b), THEN the export is audited for single-SKU/single-batch compliance and a migration plan is produced.
+- [ ] GIVEN any case, THEN the bin-master data source for T-1.3 is named with an owner — T-0.4 and T-1.3 answer the same question and cross-reference each other.
 
 ---
 
@@ -229,17 +240,12 @@ Deploy `customrecord_wms_bin` — the **bin master record** (§3.3), `customreco
 > master is therefore a distinct Phase 1 data-load task, not a field default** — bin codes, types,
 > zones, pick sequences and capacities have to originate somewhere.
 >
-> **Where that data originates — to confirm, not assume.** It cannot come from NetSuite (no bins).
-> The realistic sources are the physical warehouse: an existing rack/slotting spreadsheet or WMS
-> export if one exists; otherwise a floor survey. Pick sequence is the physical walk order and likely
-> has to be captured deliberately. This needs a named owner and a source before the load can run, and
-> it overlaps Q-16 (which bin types/areas exist) and the Phase 10 remediation audit. **Flagged
-> dependency: without a bin-master source, T-1.3 deploys an empty record and every allocation, wave
-> and putaway task downstream has no bins to work with.**
->
-> *(Related wrinkle for T-0.4:* its stated method — "saved search over `inventorybalance` grouped by
-> bin" — has no bin dimension to group by under D-07. The compliance audit has to read WMS bin state,
-> or the physical count, not `inventorybalance`. Not fixed here; noted so it is caught in T-0.4.)*
+> **Where that data originates — determined by T-0.4.** It cannot come from NetSuite (no bins). T-0.4
+> (source-of-truth discovery) establishes the case — (a) nowhere → initial slotting, (b) legacy
+> system/spreadsheet → migration, (c) physical only → floor survey — and **names the bin-master source
+> with an owner.** This task consumes that output. It also overlaps Q-16 (which bin types/areas
+> exist). **Flagged dependency: without T-0.4's named source, T-1.3 deploys an empty record and every
+> allocation, wave and putaway task downstream has no bins to work with.**
 
 **Acceptance**
 - [ ] GIVEN each record, THEN every field in §3.3–§3.9 exists with the specified type and list values.
