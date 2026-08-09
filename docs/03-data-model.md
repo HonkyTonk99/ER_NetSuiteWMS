@@ -16,8 +16,8 @@ Merges the schemas from Doc A §3 and Doc B §4, plus additions required by the 
 | `custrecord_se_order` | List/Record → Transaction | |
 | `custrecord_se_sku` | List/Record → Item | |
 | `custrecord_se_batch` | Free-Form Text | Lot/batch number |
-| `custrecord_se_source_bin` | List/Record → Bin | |
-| `custrecord_se_target_bin` | List/Record → Bin | |
+| `custrecord_se_source_bin` | List/Record → `customrecord_wms_bin` | |
+| `custrecord_se_target_bin` | List/Record → `customrecord_wms_bin` | |
 | `custrecord_se_qty` | Decimal | |
 | `custrecord_se_status` | List/Record | PENDING, PROCESSING, POSTED, FAILED, **SUPERSEDED, DEFERRED** *(D-11 — deferred is legitimate work in the wrong sequence; failed needs a human. Do not merge them)* |
 | `custrecord_se_error_log` | Long Text | |
@@ -41,7 +41,7 @@ for the M/R input search — this table reaches ~350k rows at a 7-day retention.
 
 | Field | Type | Notes |
 |---|---|---|
-| `custrecord_lock_resource_type` | List/Record | BIN, ORDER, LOT, **WAVE** |
+| `custrecord_lock_resource_type` | List/Record | BIN, ORDER, LOT, **WAVE**. When `BIN`, `custrecord_lock_resource_id` holds a `customrecord_wms_bin` internal ID |
 | `custrecord_lock_resource_id` | Free-Form Text | **UNIQUE — the acquire mechanism (AD-05)** |
 | `custrecord_lock_acquired_by` | List/Record → Employee | |
 | `custrecord_lock_acquired_time` | Date/Time | |
@@ -55,7 +55,7 @@ One row per bin. Viable as a single tiny record precisely because of the 1-SKU/1
 
 | Field | Type | Notes |
 |---|---|---|
-| `custrecord_bs_bin` | List/Record → Bin | **UNIQUE** — one state row per bin |
+| `custrecord_bs_bin` | List/Record → `customrecord_wms_bin` | **UNIQUE** — one state row per bin |
 | `custrecord_bs_item` | List/Record → Item | Current SKU, empty when bin is empty |
 | `custrecord_bs_lot` | Free-Form Text | Current batch, empty when bin is empty |
 | `custrecord_bs_qty` | Decimal | Current physical quantity |
@@ -73,17 +73,36 @@ One row per bin. Viable as a single tiny record precisely because of the 1-SKU/1
 Read on every scan; written on every accepted scan. **This is the hot record in the system** — it
 must be a single-record lookup by bin internal ID, never a search.
 
-## 3.3 Bin record — custom fields
+## 3.3 `customrecord_wms_bin` — bin master **(rewritten per D-07; corrects the former "Bin record — custom fields")**
+
+**Bins are a first-class WMS record, not a NetSuite feature.** Under D-07 the NetSuite Bin Management
+feature is off, so there is no native Bin record to hang custom fields off — the previous version of
+this section was a leftover from before that ruling. The WMS owns the bin master outright. **Every
+`→ customrecord_wms_bin` reference elsewhere in this document points here** (`custrecord_bs_bin`,
+`custrecord_se_source_bin`, `custrecord_se_target_bin`, `custrecord_wave_stage_location`,
+`custrecord_replen_unit_bin`, the replen-task bins in §3.5, and the `BIN` resource in §3.2).
 
 | Field | Type | Notes |
 |---|---|---|
-| `custrecord_wms_bin_type` | List/Record | **UNIT, BULK, STAGE, RECEIVING, QC_HOLD** — extended per AD-14 / F-18. Staging bins are mixed by definition and had no valid type before |
-| `custrecord_wms_bin_policy` | List/Record | **New (AD-14).** Points at the policy row carrying `singleSku`, `singleBatch`, `allowDirectPick`, `replenTarget` |
-| `custrecord_wms_bin_current_sku` | List/Record → Item | **Deprecated in favour of `customrecord_wms_bin_state`.** Retained read-only for NetSuite UI convenience; never read by WMS logic |
-| `custrecord_wms_bin_current_batch` | Free-Form Text | Same — deprecated, display only |
-| **`custrecord_wms_bin_zone`** | List/Record | Required for wave zone constraint (AD-10) |
-| **`custrecord_wms_bin_pick_sequence`** | Integer | Walk-path optimisation — the FRD promises "optimise walk sequences" with no data to do it |
-| **`custrecord_wms_bin_blocked`** | Checkbox | Excludes a bin from allocation (damage, count in progress, remediation) |
+| `name` | Text | Bin code, e.g. `A-01-03`. **UNIQUE** |
+| `custrecord_wb_location` | List/Record → Location | NetSuite location the bin physically sits in |
+| `custrecord_wb_type` | List/Record | **UNIT, BULK, STAGE, RECEIVING, QC_HOLD** (AD-14 / F-18) |
+| `custrecord_wb_policy` | List/Record → `customrecord_wms_bin_policy` | Carries `singleSku`, `singleBatch`, `allowDirectPick`, `replenTarget` (AD-14) — validation loads policy, never a hardcoded type check (invariant #2) |
+| `custrecord_wb_zone` | List/Record | Wave zone constraint (AD-10) |
+| `custrecord_wb_pick_sequence` | Integer | Walk-path ordering (T-6.3) |
+| `custrecord_wb_capacity` | Decimal | Optional; directed putaway uses it (T-5.4) |
+| `custrecord_wb_blocked` | Checkbox | Excludes the bin from allocation (damage, count in progress, remediation) |
+| `custrecord_wb_active` | Checkbox | Inactive bins are retained but never allocated |
+
+> **Bin contents are NOT stored here.** SKU, lot and quantity live only in
+> `customrecord_wms_bin_state` (§3.2b), the operational truth. This record is the *static master* —
+> identity, location, type, policy, zone, walk order, capacity. Keeping the two apart is deliberate
+> (invariant #1): never shadow the projection with a second, staler copy.
+
+> **Dropped from the old section:** `custrecord_wms_bin_current_sku` and `_current_batch` — they
+> duplicated bin_state and are gone entirely, not merely deprecated. The remaining old
+> `custrecord_wms_bin_*` fields (type, policy, zone, pick_sequence, blocked) are re-homed onto this
+> record with the `custrecord_wb_*` prefix.
 
 ## 3.4 `customrecord_wms_replen_profile`
 
@@ -91,7 +110,7 @@ Implied by Doc B §2.2 but never defined as a record. Explicit here.
 
 | Field | Type |
 |---|---|
-| `custrecord_replen_unit_bin` | List/Record → Bin |
+| `custrecord_replen_unit_bin` | List/Record → `customrecord_wms_bin` |
 | `custrecord_replen_item` | List/Record → Item |
 | `custrecord_replen_trigger_qty` | Decimal |
 | `custrecord_replen_optimum_qty` | Decimal |
@@ -102,7 +121,7 @@ Implied by Doc B §2.2 but never defined as a record. Explicit here.
 
 | Field | Type |
 |---|---|
-| `custrecord_rt_item` / `_source_bin` / `_target_bin` / `_lot` / `_qty` | as named |
+| `custrecord_rt_item` / `_source_bin` / `_target_bin` / `_lot` / `_qty` | as named; `_source_bin` and `_target_bin` are `List/Record → customrecord_wms_bin` |
 | `custrecord_rt_status` | OPEN, ASSIGNED, IN_PROGRESS, COMPLETE, CANCELLED, **BLOCKED** |
 | `custrecord_rt_priority` | Integer |
 | `custrecord_rt_assigned_to` | List/Record → Employee |
@@ -116,7 +135,7 @@ Implied by Doc B §2.2 but never defined as a record. Explicit here.
 | `custrecord_wave_orders` | Long Text | JSON array of order IDs |
 | `custrecord_wave_assigned_picker` | List/Record → Employee | |
 | `custrecord_wave_assigned_packer` | List/Record → Employee | |
-| `custrecord_wave_stage_location` | List/Record → Bin | |
+| `custrecord_wave_stage_location` | List/Record → `customrecord_wms_bin` | |
 | `custrecord_wave_status` | List/Record | Pending, Picking, **Staged_For_Packing**, Packing, Complete, **Cancelled, Exception** |
 | **`custrecord_wave_zone`** | List/Record | |
 | **`custrecord_wave_ship_by`** | Date | Clustering constraint |
@@ -130,7 +149,7 @@ Implied by Doc B §2.2 but never defined as a record. Explicit here.
 
 | Field | Type |
 |---|---|
-| `custrecord_custody_wave` / `_reassigned_from` / `_reassigned_to` / `_timestamp` / `_stage_bin` | as FRD |
+| `custrecord_custody_wave` / `_reassigned_from` / `_reassigned_to` / `_timestamp` / `_stage_bin` | as FRD; `_stage_bin` is `List/Record → customrecord_wms_bin` |
 | **`custrecord_custody_action`** | HANDOFF, ACCEPT, **REJECT**, REASSIGN |
 | **`custrecord_custody_tote_id`** | Free-Form Text |
 | **`custrecord_custody_reject_reason`** | Free-Form Text |

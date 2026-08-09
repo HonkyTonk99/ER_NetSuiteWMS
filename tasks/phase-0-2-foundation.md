@@ -136,10 +136,43 @@ jest harness with SuiteScript module stubs so pure logic is unit-testable.
 
 ---
 
+### T-0.6 — Spike: prove or disprove atomic field uniqueness
+**Depends on:** T-0.5 · **Gates:** T-1.1 · **De-risks:** AD-04, AD-05 · *(new 2026-08-09 — Critique 1)*
+
+**Narrative**
+As the architect, I want the uniqueness assumption tested before two architecture decisions are
+built on it. AD-04 (idempotency) and AD-05 (locking) both depend on NetSuite enforcing field
+uniqueness **atomically under concurrent saves** — a property that was asserted, never verified.
+Documentation cannot settle it: uniqueness enforced by application-layer validation behaves
+differently from a database constraint under two simultaneous `record.save()` calls. Only an
+experiment answers it.
+
+**Requirement**
+In a DEV sandbox, create a throwaway custom record with a unique text field. Drive concurrent
+creates of the **same** value from at least two simultaneous execution contexts (e.g. parallel
+scheduled/Map-Reduce deployments or concurrent RESTlet calls), repeated enough times to be
+statistically meaningful rather than a single lucky pass. Count the resulting rows. Repeat for the
+lock-record shape (`custrecord_lock_resource_id`). Record row counts, the error raised to the loser,
+and whether it is catchable.
+
+**Acceptance**
+- [ ] GIVEN N concurrent creates of an identical unique value, THEN exactly one row exists and the losers raise a catchable error — **or** the failure is documented with the observed row count.
+- [ ] GIVEN the result, THEN AD-04 and AD-05 are either confirmed **in writing**, or the fallbacks below are adopted **in writing**.
+
+**Fallbacks if it fails**
+- **Idempotency (AD-04):** move dedupe to the committer. Group by UUID, keep the first, mark the rest
+  `SUPERSEDED`. This degrades the guarantee from "no duplicate rows" to "no duplicate *ledger
+  postings*" — which is the property that actually matters. **Consider adopting this regardless, as
+  belt and braces**, since it makes the ingestion write safe even if uniqueness holds.
+- **Locking (AD-05):** drop the distributed lock and route all bin-affecting commit work through a
+  **single Map/Reduce queue**. Costs parallelism on that work, removes the primitive entirely.
+
+---
+
 # PHASE 1 — Data Model & Configuration
 
 ### T-1.1 — Create scan event, lock and config records
-**Depends on:** T-0.5 · **Resolves:** F-08 · **Spec:** `03-data-model.md` §3.1, §3.2, §3.10
+**Depends on:** T-0.5, T-0.6 · **Resolves:** F-08 · **Spec:** `03-data-model.md` §3.1, §3.2, §3.10
 
 **Narrative**
 As a developer, I want the core custom records deployed with correct field types and uniqueness
@@ -185,15 +218,34 @@ As a developer, I want the bin extensions, replenishment, wave, custody, excepti
 deployed, so that the functional phases have a schema to build against.
 
 **Requirement**
-Deploy bin custom fields (§3.3), `customrecord_wms_replen_profile` (§3.4),
-`customrecord_wms_replen_task` (§3.5), `customrecord_wms_wave_pick` (§3.6),
+Deploy `customrecord_wms_bin` — the **bin master record** (§3.3), `customrecord_wms_replen_profile`
+(§3.4), `customrecord_wms_replen_task` (§3.5), `customrecord_wms_wave_pick` (§3.6),
 `customrecord_wms_custody_log` (§3.7), `customrecord_wms_exception` (§3.8),
 `customrecord_wms_metric_snapshot` (§3.9). Standardise wave status on `STAGED_FOR_PACKING`.
 
+> **Consequence of Correction 3 (D-07).** §3.3 is no longer "custom fields on an existing bin record"
+> — under D-07 NetSuite has no bin record. `customrecord_wms_bin` is a **first-class WMS record the
+> WMS creates and owns.** There is nothing in NetSuite to enrich or import from. **Populating the bin
+> master is therefore a distinct Phase 1 data-load task, not a field default** — bin codes, types,
+> zones, pick sequences and capacities have to originate somewhere.
+>
+> **Where that data originates — to confirm, not assume.** It cannot come from NetSuite (no bins).
+> The realistic sources are the physical warehouse: an existing rack/slotting spreadsheet or WMS
+> export if one exists; otherwise a floor survey. Pick sequence is the physical walk order and likely
+> has to be captured deliberately. This needs a named owner and a source before the load can run, and
+> it overlaps Q-16 (which bin types/areas exist) and the Phase 10 remediation audit. **Flagged
+> dependency: without a bin-master source, T-1.3 deploys an empty record and every allocation, wave
+> and putaway task downstream has no bins to work with.**
+>
+> *(Related wrinkle for T-0.4:* its stated method — "saved search over `inventorybalance` grouped by
+> bin" — has no bin dimension to group by under D-07. The compliance audit has to read WMS bin state,
+> or the physical count, not `inventorybalance`. Not fixed here; noted so it is caught in T-0.4.)*
+
 **Acceptance**
 - [ ] GIVEN each record, THEN every field in §3.3–§3.9 exists with the specified type and list values.
+- [ ] GIVEN `customrecord_wms_bin`, THEN `name` (bin code) is flagged unique and every field in §3.3 (`custrecord_wb_*`) is present with the specified type.
 - [ ] GIVEN the wave status list, THEN it contains exactly Pending, Picking, STAGED_FOR_PACKING, Packing, Complete, Cancelled, Exception — with no duplicate "Staged" value.
-- [ ] GIVEN a bin, THEN zone and pick sequence are populated for all active bins (data load task).
+- [ ] GIVEN a documented bin-master source with a named owner, WHEN the data load runs, THEN active bins exist in `customrecord_wms_bin` with location, type, policy, zone and pick sequence populated.
 
 ---
 

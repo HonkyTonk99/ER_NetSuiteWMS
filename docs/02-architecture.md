@@ -84,10 +84,25 @@ no collections, no child records.
 right now, including work the ledger has not caught up to. `inventorybalance` remains the
 **financial** truth. Neither is subordinate; they answer different questions and are reconciled.
 
-**Optimistic concurrency, not locking:** the ingestion update is a compare-and-set on
-`custrecord_bs_version`. A version mismatch means something changed underneath — rare, and the
-response is simply to re-read and re-evaluate once, not to block. This costs nothing in the common
-case, which is the whole point.
+**Optimistic version check, not an atomic compare-and-set** *(amended 2026-08-09 — wording correction)*:
+SuiteScript offers no atomic compare-and-set. The ingestion update is a **read-check-write**: read
+`custrecord_bs_version`, evaluate, then write with the incremented version. Two ingestion writes to
+the same bin that interleave between another's read and write can therefore **lose an update** — the
+window is real, not eliminated. It is narrowed by re-reading and re-evaluating once on a detected
+mismatch, not closed.
+
+**The residual risk is bounded and accepted, by design — do not build a heavier primitive to close it:**
+
+- The window exists **only on the ingestion path.** The commit path takes the bin lock (AD-05), so
+  machine-machine races there are serialised.
+- On ingestion the colliding parties are two operators, and **D-01 rules operator-to-operator
+  collision on a directed floor not a credible risk.** A lost update here needs two operators writing
+  the same bin in the same sub-second window.
+- **Nightly reconciliation (T-8.3) is the backstop** — a lost update surfaces as projection-vs-ledger
+  divergence and is caught within a day.
+
+A distributed lock or a heavier concurrency primitive on the ingestion path would re-introduce exactly
+the cost D-01 removed, to close a window the backstop already covers. It is deliberately not built.
 
 ## AD-04 — Unique-index idempotency, no read on the hot path (resolves F-08)
 
