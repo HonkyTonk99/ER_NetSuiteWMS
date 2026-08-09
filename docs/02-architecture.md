@@ -241,20 +241,32 @@ single-SKU**, yet the schema offers no type for it, and §2.1 would block §2.5.
 
 Make the rule a **policy attached to a bin type**, held in configuration:
 
-| Bin type | `singleSku` | `singleBatch` | `allowDirectPick` | `replenTarget` | Notes |
-|---|---|---|---|---|---|
-| `UNIT` | true | true | true | true | Pick face |
-| `BULK` | true | true | true | false | Reserve storage; direct pick allowed per D-03 |
-| `STAGE` | false | false | false | false | Totes / staging — mixed by definition |
-| `RECEIVING` | false | false | false | false | Inbound dock, pre-putaway |
-| `QC_HOLD` | false | false | false | false | Quarantine |
+Bin types (Q-16 closed 2026-08-09): **UNIT, BULK, STAGE, RECEIVING, QUALITY, RETURN, DEFECT.**
+
+| Bin type | `singleSku` | `singleBatch` | `allowDirectPick` | `replenTarget` | `availableForFulfilment` | Notes |
+|---|---|---|---|---|---|---|
+| `UNIT` | true | true | true | true | **true** | Pick face |
+| `BULK` | true | true | true | false | **true** | Reserve storage; direct pick allowed per D-03 |
+| `STAGE` | false | false | false | false | **false** | Totes / staging — mixed by definition |
+| `RECEIVING` | false | false | false | false | **false** | Inbound dock, pre-putaway |
+| `QUALITY` | false | false | false | false | **false** | Quarantine / QC hold (was `QC_HOLD`) |
+| `RETURN` | false | false | false | false | **false** | Returned stock, pre-disposition |
+| `DEFECT` | false | false | false | false | **false** | Confirmed defective (post-inspection disposition) |
+
+**`availableForFulfilment` (new, Q-16):** true for **UNIT and BULK only.** Stock in any other bin type
+is physically present but **not pickable** — it must be physically moved into a UNIT or BULK bin
+before it can be allocated. This attribute is enforced in allocation (T-7.1), replenishment sourcing
+(T-5.2) and putaway routing (T-5.4), and is deliberately **not** a reconciliation filter (T-8.3): the
+stock still exists and still counts toward the WMS-total-equals-NetSuite-quantity contract. It also
+surfaces **F-26** — NetSuite counts this stock toward quantity on hand and may commit it, but the WMS
+cannot pick it.
 
 Validation becomes: *load the bin's policy, apply it.* One code path, no special cases, no `if
 (binType === 'UNIT' || binType === 'BULK')` scattered through the codebase.
 
 **What this buys:**
 
-- F-18 disappears — staging, receiving and QC are describable rather than contradictory.
+- F-18 disappears — staging, receiving, quality, return and defect bins are describable rather than contradictory.
 - If the business ever wants mixed-lot bulk bins, or a fast-mover pick face carrying two lots, that
   is a **configuration change**, not a rebuild.
 - New bin types (cross-dock, returns, kitting) are additive.

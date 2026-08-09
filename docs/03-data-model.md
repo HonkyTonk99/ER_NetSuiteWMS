@@ -86,7 +86,7 @@ this section was a leftover from before that ruling. The WMS owns the bin master
 |---|---|---|
 | `name` | Text | Bin code, e.g. `A-01-03`. **UNIQUE** |
 | `custrecord_wb_location` | List/Record → Location | NetSuite location the bin physically sits in |
-| `custrecord_wb_type` | List/Record | **UNIT, BULK, STAGE, RECEIVING, QC_HOLD** (AD-14 / F-18) |
+| `custrecord_wb_type` | List/Record | **UNIT, BULK, STAGE, RECEIVING, QUALITY, RETURN, DEFECT** (AD-14 / F-18; Q-16 closed 2026-08-09) |
 | `custrecord_wb_policy` | List/Record → `customrecord_wms_bin_policy` | Carries `singleSku`, `singleBatch`, `allowDirectPick`, `replenTarget` (AD-14) — validation loads policy, never a hardcoded type check (invariant #2) |
 | `custrecord_wb_zone` | List/Record | Wave zone constraint (AD-10) |
 | `custrecord_wb_pick_sequence` | Integer | Walk-path ordering (T-6.3) |
@@ -181,12 +181,13 @@ Implied by Doc B §2.2 but never defined as a record. Explicit here.
 
 | Field | Type | Notes |
 |---|---|---|
-| `name` | Text | UNIT, BULK, STAGE, RECEIVING, QC_HOLD |
+| `name` | Text | UNIT, BULK, STAGE, RECEIVING, QUALITY, RETURN, DEFECT (Q-16 closed 2026-08-09) |
 | `custrecord_bp_single_sku` | Checkbox | |
 | `custrecord_bp_single_batch` | Checkbox | |
 | `custrecord_bp_allow_direct_pick` | Checkbox | True for BULK per D-03 |
 | `custrecord_bp_replen_target` | Checkbox | True for UNIT only |
 | `custrecord_bp_allow_putaway` | Checkbox | |
+| **`custrecord_bp_available_for_fulfilment`** | Checkbox | **New (Q-16).** True for UNIT and BULK only. False bins hold physical stock that is not pickable until moved into UNIT/BULK — enforced in T-7.1, T-5.2, T-5.4; **not** filtered out of reconciliation (T-8.3). Surfaces F-26 |
 
 Seeded per the AD-14 table. Changing the bulk-bin rule later is an edit here, not a code change.
 

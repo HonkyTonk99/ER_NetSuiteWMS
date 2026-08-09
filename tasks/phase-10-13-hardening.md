@@ -2,43 +2,48 @@
 
 ---
 
-# PHASE 10 — Bin Data Remediation
+# PHASE 10 — Bin Data Migration & Remediation
 
-*Cannot be skipped. If today's bins are non-compliant, the invariant fails on day 1 and every
-downstream feature misbehaves.*
+*Cannot be skipped. The bin master and opening bin state are migrated from the third-party
+application (T-0.4 case b); if the migrated bins are non-compliant, the single-SKU/single-batch
+invariant fails on day 1 and every downstream feature misbehaves.*
 
-> **Pending T-0.4 (asymmetric — the phase title assumes the cheap case).** "Remediation" assumes bins
-> exist today and need cleaning up (T-0.4 case (b)). If T-0.4 returns case (a) NOWHERE or (c) PHYSICAL
-> ONLY, this is not remediation at all but **initial slotting of the whole warehouse** — design the
-> bin scheme, create the bin master, label racks physically, first putaway. That is a materially
-> larger, mostly physical job and **probably the programme's critical path**. The estimate only moves
-> up. T-10.1 is flagged accordingly; re-scope this phase once T-0.4 selects the case.
+> **T-0.4 answered — case (b): migration.** Bin definitions and contents live in a third-party app and
+> are migrated into `customrecord_wms_bin` + opening `customrecord_wms_bin_state`. This phase is a data
+> **migration plus compliance remediation of what arrives** — not greenfield slotting. Its defining
+> risk is **cutover staleness**: stock moves between export and go-live, so the export is stale on
+> arrival. Resolve by freezing movement during cutover or an immediate delta reconciliation (T-10.1,
+> and the cutover runbook T-13.3).
 
-### T-10.1 — Remediation plan and re-slotting tooling
-**Depends on:** T-0.4, T-1.3
-
-> ⚠️ **Scope pending T-0.4 outcome (flagged 2026-08-09, not yet rewritten).** This task as written
-> assumes existing non-compliant bins to split ("which bins split, which SKUs move where"). That holds
-> only in T-0.4 **case (b)** — bin data already exists in another system. Under **case (a) NOWHERE**
-> or **case (c) PHYSICAL ONLY**, there is nothing to remediate: this task becomes *design the bin
-> scheme, create the bin master (`customrecord_wms_bin`), label the racks physically, and perform
-> first putaway* — initial slotting, not remediation, with a different critical-path position. **Do
-> not build to the text below until T-0.4 selects the case.** Left unrewritten deliberately.
+### T-10.1 — Bin migration, remediation plan and re-slotting tooling
+**Depends on:** T-0.4, T-1.3 · *(rewritten 2026-08-09 — T-0.4 answered case (b); this is a migration)*
 
 **Narrative**
-As a warehouse manager, I want a worked plan for splitting mixed bins into compliant ones, so that
-the floor can be made ready without stopping shipping.
+As a warehouse manager, I want the third-party bin data migrated into NetSuite and any invariant
+violations in it cleaned up, so that the floor starts go-live compliant without stopping shipping.
 
 **Requirement**
-From the T-0.4 audit, produce a remediation plan: which bins split, which SKUs move where, new bins
-required, sequencing by velocity (fastest movers first), and labour estimate. Build a saved search
-and a supervisor screen tracking progress. Provide directed move tasks on the handheld reusing the
-Phase 5 execution flow. Bins under remediation are marked `custrecord_wb_blocked`.
+**Migrate** the third-party export (T-0.4) into `customrecord_wms_bin` (definitions: code, location,
+type, zone, pick sequence, capacity) and opening `customrecord_wms_bin_state` (contents: SKU, lot,
+quantity per bin). Type the migrated bins with the Q-16 set (UNIT, BULK, STAGE, RECEIVING, QUALITY,
+RETURN, DEFECT). Then **audit the migrated data** for single-SKU/single-batch compliance and produce a
+**remediation plan** for what fails it: which bins split, which SKUs move where, new bins required,
+sequencing by velocity (fastest movers first), labour estimate. Build a saved search and a supervisor
+screen tracking progress. Provide directed move tasks on the handheld reusing the Phase 5 execution
+flow. Bins under remediation are marked `custrecord_wb_blocked`.
+
+**Cutover staleness (new, per T-0.4).** The export is stale the moment it is taken — stock keeps
+moving in the third-party system until go-live. The migration needs a defined **cutover point**:
+either **freeze bin movement** in the source system during cutover, or plan an **immediate delta
+reconciliation** capturing everything that moved between export and go-live. Without one, opening bin
+state is wrong on day 1. This is coordinated with, and evidenced in, the cutover runbook (T-13.3).
 
 **Acceptance**
-- [ ] GIVEN the audit, THEN a per-bin remediation plan with target bins and sequencing exists and is signed off by the warehouse manager.
+- [ ] GIVEN the third-party export, WHEN migration runs, THEN `customrecord_wms_bin` and opening `customrecord_wms_bin_state` are populated and every bin carries a Q-16 type and policy.
+- [ ] GIVEN the migrated data, THEN a compliance audit + per-bin remediation plan with target bins and sequencing exists and is signed off by the warehouse manager.
 - [ ] GIVEN remediation moves, THEN they execute through the standard directed-move flow with full event traceability.
 - [ ] GIVEN a bin marked blocked, THEN no wave, replenishment or putaway allocates to it.
+- [ ] GIVEN a defined cutover point, THEN either a movement freeze or a delta reconciliation is in place, and opening bin state matches the physical floor at go-live within an agreed tolerance.
 - [ ] GIVEN remediation completes, WHEN the compliance search runs, THEN zero bins hold more than one SKU or lot.
 
 ---
@@ -353,8 +358,17 @@ defined **and rehearsed** — not merely documented. Phased option assessed (one
 first). Two-week hypercare with daily reconciliation review, on-site support and a defined escalation
 path.
 
+**Bin-data migration cutover (new, per T-0.4 case b / T-10.1).** The bin master and opening bin state
+come from a third-party export that is stale the moment it is taken. The runbook must pin a **cutover
+point** for bin data: either **freeze bin movement** in the source system for the cutover window, or
+run an **immediate delta reconciliation** capturing every move between export and go-live. Confirm
+opening `customrecord_wms_bin_state` matches the physical floor (or the pre-cutover snapshot) within
+an agreed tolerance **before** go/no-go. A stale bin migration is a silent way to start day 1 already
+diverged.
+
 **Acceptance**
 - [ ] GIVEN the runbook, WHEN rehearsed in sandbox, THEN it completes within the planned window and the rollback is proven to work.
+- [ ] GIVEN the bin-data migration, THEN the cutover point is defined (freeze or delta reconciliation) and opening bin state is confirmed against physical within tolerance before go/no-go.
 - [ ] GIVEN go-live, THEN the pre-cutover inventory snapshot is captured and retained.
 - [ ] GIVEN hypercare, THEN reconciliation is reviewed daily and exceptions are cleared to zero each day before close.
 - [ ] GIVEN hypercare exit criteria are met, THEN the system transitions to business-as-usual support with a signed handover.

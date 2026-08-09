@@ -111,12 +111,12 @@ nice-to-have** (Phase 8).
 - That the handheld application exists. Doc A says "handheld terminals POST to a RESTlet" and stops
   there. The mobile client is the largest single unspecified work item in this programme and is
   carried as Phase 3 with its own decision gate.
-- That existing bin data is compliant. Single-SKU/single-batch is a hard invariant; if today's
-  inventory has mixed bins, day-1 go-live is blocked until remediated (Phase 10).
-  > **Pending T-0.4 (asymmetric).** This assumes bins *exist* today and merely need cleaning up. T-0.4
-  > tests that: if it returns case (a) NOWHERE or (c) PHYSICAL ONLY, there is no bin data to remediate
-  > and Phase 10 becomes **initial slotting of the whole warehouse** — a materially larger, mostly
-  > physical job that is probably the programme's critical path. The estimate moves one way: up.
+- That existing bin data is compliant. Single-SKU/single-batch is a hard invariant; if the migrated
+  bin data has mixed bins, day-1 go-live is blocked until remediated (Phase 10).
+  > **T-0.4 answered — case (b).** Bin data lives in a **third-party application** and is **migrated**
+  > into NetSuite (`customrecord_wms_bin` + opening `customrecord_wms_bin_state`). Phase 10 is a
+  > migration, not greenfield slotting. The open risk is now cutover staleness — stock moves between
+  > export and go-live — handled by a freeze or delta reconciliation (T-10.1, T-13.3).
 - That the sample code in the FRD is production-intended. It reads as illustrative pseudo-code —
   there are several defects in it (`01-review-findings.md`), which is normal for an FRD and not a
   criticism of the document.

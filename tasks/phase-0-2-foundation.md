@@ -19,8 +19,11 @@ model is sized on a real number.
 *Boundary confirmation.* Verify via `runtime.isFeatureInEffect`: **Bin Management is OFF** (basic
 and advanced) and will remain off — this is a standing assumption, not a snapshot; `MULTILOCINVT`
 state and location count; `LOTNUMBEREDINVENTORY` and `SERIALIZEDINVENTORY`; Multiple UOM (Q-07).
-Record whether the NetSuite WMS SuiteApp is installed (Q-13) — it brings its own bin records and
-must be removed or explicitly quarantined.
+Record whether the NetSuite WMS SuiteApp is installed (Q-13). ⚠️ **This is a foundation check, not
+housekeeping:** the Oracle NetSuite WMS SuiteApp **requires Bin Management enabled**, which **directly
+contradicts D-07.** If it is installed and cannot be removed, D-07 is not viable as written and the
+NetSuite boundary (`06-netsuite-boundary.md`) must be re-opened before any ledger code. Confirm it is
+absent, or plan its removal, or escalate.
 
 *Item census.* For every in-scope item, classify as **PLAIN** or **LOT** and report by item count
 and by share of order lines. Serial is out of scope (D-08), so the census has a second purpose:
@@ -40,7 +43,7 @@ Do confirm the **accounting period calendar and close cadence**, which the perio
 - [ ] GIVEN the item master, WHEN the census runs, THEN PLAIN and LOT counts are reported by item **and** by order-line share.
 - [ ] GIVEN any serialised item in a WMS-managed location, THEN it is listed and a decision to exclude or re-configure it is recorded before Phase 1.
 - [ ] GIVEN the account, THEN the accounting period calendar and close cadence are recorded for T-11.4.
-- [ ] GIVEN the NetSuite WMS SuiteApp is installed, THEN a removal-or-quarantine decision is recorded.
+- [ ] GIVEN the NetSuite WMS SuiteApp is installed, THEN it is escalated as a D-07 contradiction (it requires Bin Management) and a removal-or-reopen-the-boundary decision is recorded before Phase 1.
 - [ ] GIVEN the audit, THEN SuiteCloud Plus licence count and current concurrency limit are recorded for T-0.2.
 
 ---
@@ -98,33 +101,42 @@ Q-17 offline duration, Q-25 manufacturing transaction type, Q-27 over-receipt to
 ---
 
 ### T-0.4 — Establish where bin data lives today, and what state it is in
-**Depends on:** T-0.1 · **Feeds:** Phase 10, T-1.3 · *(rewritten 2026-08-09 — the original "audit inventorybalance grouped by bin" assumed a NetSuite bin dimension that D-07 removed; there may be nothing to audit)*
+**Depends on:** T-0.1 · **Feeds:** Phase 10, T-1.3 · **Answered 2026-08-09: case (b)** · *(rewritten 2026-08-09 — the original "audit inventorybalance grouped by bin" assumed a NetSuite bin dimension that D-07 removed)*
+
+> **ANSWERED — case (b): another system.** Bin data lives in a **third-party application** today and
+> will be **migrated into NetSuite** (as `customrecord_wms_bin` + `customrecord_wms_bin_state`).
+> Phase 10 is therefore a **migration, not initial slotting**. What remains open is the *scope* of
+> that export (below) and the cutover mechanics (T-10.1, T-13.3).
 
 **Narrative**
 As the delivery lead, I want to know whether bin location data exists anywhere today, so that Phase 10
 can be scoped as cleanup, migration, or greenfield slotting.
 
 **Requirement**
-The original task audited `inventorybalance` grouped by bin for single-SKU/single-batch compliance.
-Under D-07 that question may have **no referent**: NetSuite has no bins, and the WMS does not exist
-yet — so unless bins live in a third system, there is nothing to audit because there are no bins.
-This is discovery of the **source of truth**, not a compliance audit. Determine which case applies:
+The original task audited `inventorybalance` grouped by bin — a dead premise under D-07 (no NetSuite
+bin dimension). Discovery instead identifies the **source of truth**. **The answer is case (b): a
+third-party application.** For completeness the cases were:
 
-- **(a) NOWHERE** — stock is tracked at location level only; physical position is tribal knowledge.
-  Phase 10 becomes **initial slotting**, not remediation.
-- **(b) ANOTHER SYSTEM** — a legacy WMS or spreadsheet holds bin assignments. Audit that export for
-  single-SKU/single-batch compliance and assess it as a **migration**.
-- **(c) PHYSICAL ONLY** — racks are labelled but no system holds the mapping. Requires a **floor
-  survey** to capture the bin master.
+- **(a) NOWHERE** — location-level only; Phase 10 would be initial slotting. *(Not the case.)*
+- **(b) ANOTHER SYSTEM** — a third-party app holds bin assignments. **← the answer.** Audit its export
+  for single-SKU/single-batch compliance and plan a **migration**.
+- **(c) PHYSICAL ONLY** — labelled racks, no system; floor survey needed. *(Not the case.)*
 
-Then quantify: number of bins (existing or required), SKUs affected, units to move, and estimated
-labour hours.
+**Now confirm the export's scope — definitions vs contents (both are needed):**
+- **Bin DEFINITIONS** (code, location, type, zone, pick sequence, capacity) seed the **bin master**
+  `customrecord_wms_bin` (T-1.3).
+- **Bin CONTENTS** (which SKU/lot/quantity is in which bin *right now*) seed **opening bin state**
+  `customrecord_wms_bin_state`.
+- Determine whether the third-party app holds **both**. If it holds definitions only, opening bin
+  state must come from a physical count at cutover — which changes the Phase 10 / T-13.3 plan.
+
+Then quantify: number of bins, SKUs affected, units to move, and estimated migration labour hours.
 
 **Acceptance**
-- [ ] GIVEN the discovery, THEN the applicable case (a/b/c) is recorded with evidence.
-- [ ] GIVEN case (a) or (c), THEN Phase 10 is re-scoped as initial slotting, re-estimated, and its position in the critical path is re-assessed.
-- [ ] GIVEN case (b), THEN the export is audited for single-SKU/single-batch compliance and a migration plan is produced.
-- [ ] GIVEN any case, THEN the bin-master data source for T-1.3 is named with an owner — T-0.4 and T-1.3 answer the same question and cross-reference each other.
+- [ ] GIVEN the discovery, THEN case (b) is recorded with evidence (which third-party app, export format, refresh capability).
+- [ ] GIVEN the export, THEN it is audited for single-SKU/single-batch compliance and a **migration** plan is produced (Phase 10).
+- [ ] GIVEN the export, THEN it is confirmed whether it carries bin **contents** as well as **definitions**; if definitions only, an opening-count plan for bin state is recorded.
+- [ ] GIVEN the migration, THEN the bin-master data source for T-1.3 is named (the third-party app export) with an owner — T-0.4 and T-1.3 cross-reference each other.
 
 ---
 
@@ -240,12 +252,14 @@ Deploy `customrecord_wms_bin` — the **bin master record** (§3.3), `customreco
 > master is therefore a distinct Phase 1 data-load task, not a field default** — bin codes, types,
 > zones, pick sequences and capacities have to originate somewhere.
 >
-> **Where that data originates — determined by T-0.4.** It cannot come from NetSuite (no bins). T-0.4
-> (source-of-truth discovery) establishes the case — (a) nowhere → initial slotting, (b) legacy
-> system/spreadsheet → migration, (c) physical only → floor survey — and **names the bin-master source
-> with an owner.** This task consumes that output. It also overlaps Q-16 (which bin types/areas
-> exist). **Flagged dependency: without T-0.4's named source, T-1.3 deploys an empty record and every
-> allocation, wave and putaway task downstream has no bins to work with.**
+> **Where that data originates — named by T-0.4 (answered: case b).** The bin master is seeded by
+> **migrating the third-party application's export** (bin definitions → `customrecord_wms_bin`; bin
+> contents → opening `customrecord_wms_bin_state`, per T-0.4). It cannot come from NetSuite (no bins).
+> Bin **types** are the Q-16 set — UNIT, BULK, STAGE, RECEIVING, QUALITY, RETURN, DEFECT — each with a
+> policy row (§3.9b) carrying `availableForFulfilment`. **Flagged dependency: without the migrated
+> export, T-1.3 deploys an empty record and every allocation, wave and putaway task downstream has no
+> bins to work with.** The migration itself, and its cutover freeze / delta reconciliation, are Phase
+> 10 (T-10.1) and cutover (T-13.3).
 
 **Acceptance**
 - [ ] GIVEN each record, THEN every field in §3.3–§3.9 exists with the specified type and list values.
@@ -390,7 +404,7 @@ always passes. `custrecord_wb_blocked` fails with a distinct code. Policy is a p
 - [ ] GIVEN the BULK policy is changed to `singleBatch: false` in configuration, WHEN a mixed-batch putaway is retried, THEN it succeeds **with no code deployment**.
 - [ ] GIVEN a bin with **negative** quantity, WHEN a different SKU is validated, THEN it is rejected with `ERR_WMS_BIN_NEGATIVE_STATE` — the bin is treated as occupied, not empty.
 - [ ] GIVEN a bin with negative quantity, WHEN the **same** SKU and lot are validated, THEN it passes so corrective putaway is possible.
-- [ ] GIVEN a bin with quantity reserved but zero available, THEN the Q-10 decision is applied.
+- [ ] GIVEN a bin holding stock NetSuite has committed elsewhere, THEN it is treated as **occupied** — the WMS tracks physical quantity only and never sees NetSuite's available/committed split (Q-10 closed, moot).
 - [ ] GIVEN the validator, THEN it is exercised by unit tests covering every policy combination without a NetSuite connection.
 
 ---

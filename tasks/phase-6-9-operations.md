@@ -127,6 +127,12 @@ Where wave demand exceeds the UNIT pick face, fall through to other bins holding
 `allowDirectPick`) per D-03, and raise replenishment only where BULK stock actually exists. Each
 task retains its constituent order-line allocations so de-consolidation is possible.
 
+**Never allocate from a non-fulfillable bin** (`availableForFulfilment: false` — QUALITY, RETURN,
+DEFECT, STAGE, RECEIVING) (Q-16). Stock there is physically present but not pickable until moved into
+UNIT/BULK, so it is invisible to allocation even when it is the only stock for the SKU — the SKU
+short-picks or is out of stock rather than directing a picker to unpickable stock. This is the WMS
+side of **F-26**: NetSuite may still have committed that quarantine stock, which is why F-26 matters.
+
 **Allocated quantity per order line may not exceed the quantity NetSuite has committed to that line**
 (F-22, AD-17). Bin and lot selection is a refinement of NetSuite's commitment, never a substitute
 for it.
@@ -138,6 +144,7 @@ for it.
 - [ ] GIVEN wave demand exceeding the UNIT pick face and **no** BULK stock existing, THEN picking is directed straight to other bins holding the SKU with no replenishment task raised. *(D-03)*
 - [ ] GIVEN every generated task, THEN the sum of its order allocations equals its total quantity.
 - [ ] GIVEN a line committed for 4 units, WHEN allocation runs, THEN no more than 4 units are allocated to it regardless of available stock.
+- [ ] GIVEN a SKU whose only physical stock is in a QUALITY/RETURN/DEFECT bin, WHEN allocation runs, THEN nothing is allocated from it and the line short-picks or reports out of stock — no picker is directed to a non-fulfillable bin.
 
 ---
 
@@ -291,6 +298,14 @@ raises a RECONCILIATION_DRIFT exception. Produces a daily summary report to fina
 **Comparison grain** (`06-netsuite-boundary.md` §4). The reconciliation contract is:
 `SUM(WMS bin quantities)` **must equal** NetSuite quantity on hand, for every item and location —
 additionally per lot for LOT items.
+
+**`availableForFulfilment: false` does NOT mean excluded from the sum (Q-16).** Stock in QUALITY,
+RETURN, DEFECT, STAGE and RECEIVING bins is *unpickable*, but it is *physically present* and NetSuite
+counts it in quantity on hand. It **must** be included in `SUM(WMS bin quantities)` or the contract
+will falsely report drift equal to the quarantine volume. Do not let anyone "helpfully" filter
+non-fulfillable bins out of reconciliation — availability and existence are different questions, and
+this control is about existence. *(The mismatch that availability actually causes is on NetSuite's
+side — it commits stock the WMS can't pick — and that is F-26, handled separately, not here.)*
 
 **Bins themselves have nothing to reconcile against.** NetSuite has no bin dimension, so bin-level
 correctness is unverifiable from outside the WMS. That raises the stakes on T-11.3 (bin state

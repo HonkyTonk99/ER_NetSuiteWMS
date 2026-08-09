@@ -14,6 +14,12 @@ A real simplification — it removes an entire class of platform problems. It al
 into the open: §5 irreplaceable bin data, §5b the authority boundary, §6 back-office attribution,
 and §7 receipt/consumption ordering.
 
+> ⚠️ **D-07 is contingent on Q-13, not yet settled.** D-07 assumes NetSuite Bin Management is off and
+> stays off. The **Oracle NetSuite WMS SuiteApp, if installed, requires Bin Management enabled** —
+> which contradicts this entire boundary. T-0.1 must confirm the SuiteApp is **not installed** (or can
+> be removed) before any ledger code is written against this document. If it is installed and cannot
+> be removed, D-07 is not viable as written and this boundary must be re-opened (Q-13).
+
 ---
 
 ## 1. The boundary

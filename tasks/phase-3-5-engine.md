@@ -346,6 +346,10 @@ Per D-03, source selection is:
    stock — a normal inventory state, not an exception.
 
 Exclude blocked bins. Never select a source that would violate the target bin's policy on arrival.
+**Never source from a non-fulfillable bin** (`availableForFulfilment: false` — QUALITY, RETURN,
+DEFECT, STAGE, RECEIVING): that stock is physically present but not pickable until it is physically
+moved into a UNIT/BULK bin (Q-16). `allowDirectPick` already excludes these from the step-3
+fall-through; `availableForFulfilment` is the explicit invariant, checked directly.
 
 > **Prerequisite (LOT items):** FEFO needs expiry dates on inventory numbers. Confirm
 > coverage before this task starts — partial coverage silently degrades FEFO to arbitrary ordering.
@@ -357,6 +361,7 @@ Exclude blocked bins. Never select a source that would violate the target bin's 
 - [ ] GIVEN an empty UNIT bin and BULK lots with differing expiry dates, THEN the earliest-expiring lot is selected.
 - [ ] GIVEN a non-empty UNIT bin holding lot A and no lot A anywhere in BULK, THEN **no replenishment task is raised** and picking allocates directly from other bins holding the SKU in FEFO order.
 - [ ] GIVEN no bin anywhere holds the SKU, THEN it reports as out of stock with no exception raised and no blocked task created.
+- [ ] GIVEN the only stock for a SKU sits in a QUALITY/RETURN/DEFECT bin, THEN replenishment sources nothing and the SKU reports out of stock — non-fulfillable stock is never drawn from.
 - [ ] GIVEN inventory numbers missing expiry dates, THEN the condition is reported rather than silently ordering arbitrarily.
 - [ ] GIVEN items without lot tracking, THEN selection falls back to FIFO by bin without error.
 
@@ -408,6 +413,15 @@ Given `(item, lot, quantity, location)`, select a target bin honouring the 1-SKU
 4. If nothing is available, raise a `NO_PUTAWAY_LOCATION` exception rather than directing the
    operator to an invalid bin.
 
+**Routing by receipt disposition (Q-16, `availableForFulfilment`).** The target bin **type** is chosen
+by the receipt's disposition, and the strategy honours `availableForFulfilment`:
+- **Good stock** targets a **fulfillable** bin (UNIT/BULK, `availableForFulfilment: true`) so it can
+  be picked — steps 1–3 above select among those.
+- **Quality-hold / defective / returned stock** targets its matching non-fulfillable type (QUALITY,
+  DEFECT, RETURN) and is **never** routed into UNIT/BULK, because that would make unpickable stock
+  look pickable.
+- Inbound receiving lands in RECEIVING (pre-putaway); putaway is the move out of it.
+
 Pure function over bin state and policy wherever possible, so it is unit-testable without NetSuite.
 Never proposes a bin whose policy the placement would violate, and never proposes a blocked bin.
 Supports splitting one receipt line across several bins when quantity exceeds a bin's capacity.
@@ -417,6 +431,7 @@ Supports splitting one receipt line across several bins when quantity exceeds a 
 - [ ] GIVEN no matching bin but an empty bin in the item's home zone, THEN the empty bin is selected.
 - [ ] GIVEN a receipt quantity exceeding one bin's capacity, THEN the putaway splits across bins and the sum equals the received quantity.
 - [ ] GIVEN no valid bin anywhere, THEN a `NO_PUTAWAY_LOCATION` exception is raised and no invalid direction is given.
+- [ ] GIVEN good stock, THEN putaway targets a bin with `availableForFulfilment: true` (UNIT/BULK); GIVEN quality-hold or defective stock, THEN it targets QUALITY/DEFECT and never a fulfillable bin.
 - [ ] GIVEN any proposal, THEN it satisfies the target bin's policy — verified by unit tests across every policy combination.
 
 ---
@@ -438,14 +453,15 @@ practical moment to capture expiry — FEFO across the whole solution depends on
 
 Handle the real cases the FRD never mentions: **over-receipt** against PO quantity (tolerance from
 config, else block), **under-receipt** leaving the PO line open, **damaged goods** routed to a
-QC_HOLD bin, and receiving against a PO line whose item is serialised (reject explicitly per D-08).
+QUALITY bin (held for disposition, `availableForFulfilment: false`), and receiving against a PO line
+whose item is serialised (reject explicitly per D-08).
 
 **Acceptance**
 - [ ] GIVEN an open PO, WHEN the operator receives a line with lot and quantity, THEN an Item Receipt posts against that PO and WMS bin state reflects the putaway.
 - [ ] GIVEN a receipt quantity above the PO line quantity, THEN it is accepted only within the configured tolerance and otherwise blocked with a clear message.
 - [ ] GIVEN a partial receipt, THEN the PO line remains open for the balance.
 - [ ] GIVEN a lot-tracked item, THEN lot number **and expiry date** are mandatory and are written to the inventory number record.
-- [ ] GIVEN damaged goods, THEN they are routed to a QC_HOLD bin and excluded from allocation.
+- [ ] GIVEN damaged goods, THEN they are routed to a QUALITY bin (`availableForFulfilment: false`) and are therefore never allocated — but still counted in reconciliation (T-8.3).
 - [ ] GIVEN a serialised item on the PO, THEN the receipt is rejected with an explicit out-of-scope message rather than a platform error.
 
 ---

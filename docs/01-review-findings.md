@@ -140,8 +140,9 @@ contradict each other. The same applies to receiving docks and QC hold areas, ne
 mentioned anywhere.
 
 **Correction (AD-14):** bin *type* carries a *policy*, rather than the rule being a constant in
-code. UNIT and BULK carry `singleSku: true, singleBatch: true`; STAGE, RECEIVING and QC_HOLD carry
-`unrestricted`. This resolves the contradiction, covers the missing bin types, and makes any future
+code. UNIT and BULK carry `singleSku: true, singleBatch: true, availableForFulfilment: true`; STAGE,
+RECEIVING, QUALITY, RETURN and DEFECT carry `unrestricted, availableForFulfilment: false` (Q-16,
+closed 2026-08-09). This resolves the contradiction, covers the missing bin types, and makes any future
 change to the bulk-bin rule a configuration edit instead of a rebuild — which is the flexibility
 requested in D-05.
 
@@ -288,7 +289,7 @@ Each of these is either a task in the plan or an open question. None of them can
 | **Returns / RMA putaway** | Not mentioned; lot + bin isolation implications | Q-05 |
 | **Packing label / packing slip printing** | §2.4 "triggers packing label generation" — no printer integration spec | `T-7.5`, Q-06 |
 | **UOM conversion** | Cache holds base UOM + conversion factors; nothing uses them. Do pickers scan eaches against case-UOM orders? | Q-07 |
-| **Bin data remediation** | If current bins are mixed-SKU, go-live is blocked. **Pending T-0.4 (asymmetric):** this assumes bins exist today; if T-0.4 returns case (a)/(c) there is nothing to remediate and Phase 10 becomes initial slotting of the whole warehouse — larger, mostly physical, likely the critical path | Phase 10 |
+| **Bin data remediation** | If migrated bins are mixed-SKU, go-live is blocked. **T-0.4 answered — case (b):** bin data migrates from a third-party app, so Phase 10 is a migration (audit the export for compliance, plan cutover freeze / delta reconciliation) — not greenfield slotting | Phase 10 |
 | **Security roles & permissions** | Picker/packer/supervisor role design absent | `T-1.4` |
 | **Multi-location / multi-subsidiary** | Every flow implicitly single-location | Q-08 |
 | **Event archiving retention** | 7-day purge stated; audit/compliance requirement unconfirmed | `T-11.1`, Q-09 |
@@ -452,6 +453,37 @@ rejection, hours after an operator did everything correctly.
 **Correction (AD-18):** every committer cycle runs in two phases — **all inbound events, then all
 outbound events.** Any outbound event that still cannot be satisfied is **deferred and retried**,
 never failed on first attempt; only after a configured number of cycles does it become an exception.
+
+### F-26 · S2 · Non-fulfillable bins make NetSuite over-commit → *(with sponsor — do not implement)*
+
+*Raised 2026-08-09, arising from Q-16 (`availableForFulfilment`).*
+
+Bins of type QUALITY, RETURN, DEFECT (and STAGE, RECEIVING) hold stock that is physically present but
+**not pickable** — the WMS will not allocate from them (`availableForFulfilment: false`, enforced in
+T-7.1 / T-5.2 / T-5.4). NetSuite, however, has no bin dimension: it counts that stock toward quantity
+on hand at the location and **will commit it to sales orders.** The result is that NetSuite promises
+stock that cannot ship, and those orders **short-pick.**
+
+This is the **mirror of F-22.** There, the WMS allocated *beyond* NetSuite's commitment (attribution
+error, WMS over-reaching). Here, NetSuite commits *beyond what the WMS can allocate* (availability
+error, NetSuite over-reaching). Both break the AD-17 two-layer contract from opposite directions, and
+this one matters precisely *because* AD-17 makes NetSuite the commitment authority — its availability
+figure has to be true.
+
+**Three options, recommendation (a). With the sponsor — not to be implemented until ruled on:**
+
+- **(a) RECOMMENDED — a separate NetSuite location for non-fulfillable stock.** Moves across the
+  fulfillable boundary (e.g. QC release into pickable stock) post an **Inventory Transfer** between
+  locations; moves *within* a location still post nothing (D-07). NetSuite availability becomes
+  correct, which is what AD-17 needs.
+- **(b) Same location, accept over-commitment, lean on short-pick handling (T-7.4).** NetSuite
+  availability is then wrong by the quarantine volume, **permanently** — every day, not transiently.
+- **(c) NetSuite inventory status** to mark quarantine stock unavailable — an Advanced Inventory
+  feature, **likely unavailable** in the target account; confirm in T-0.1 if pursued.
+
+Option (a) has a build consequence to note when ruled on: a second location means the WMS↔NetSuite
+boundary carries genuine location-to-location Inventory Transfers (T-2.7, T-4.3), which also touches
+Q-08 (multi-location scope).
 
 ---
 
