@@ -64,11 +64,13 @@ subsets for that location**. Resolved and pushed by the server, not fetched on d
 cannot be validated locally is a design failure, not a runtime condition. Cache carries a staleness
 limit and a sync token.
 
-*Location switch (D-14):* selecting a different location is a **full purge and re-warm of the cache,
-not a delta** — the new location's master data is loaded fresh. **A switch therefore requires
-connectivity** — this is *the one bounded exception to offline-first* (invariant #11): you work offline
-*within* a location, but you cannot switch locations with the radio off. Assume **one location per
-session** (register Q-31); switching is an explicit action, not implicit.
+*Location switch (D-14, D-20):* selecting a different location is a **full purge and re-warm of the
+cache, not a delta**. **A switch requires connectivity** — the **one sanctioned exception to
+offline-first (invariant #11, formalised as D-20)**. It is **atomic**: if connectivity drops mid-warm,
+the app **keeps the previous location and its cache intact** and reports failure — a **half-warmed cache
+is a defect, not a degraded state**. An **offline switch attempt is refused cleanly** with an
+operator-readable message, **never queued**. Assume **one location per session** (register Q-31);
+switching is an explicit action, not implicit.
 
 *Outbound queue — not purged on location switch (D-14):* durable, FIFO, survives app kill and battery
 pull. UUID stamped at creation, never regenerated on retry. **Queued events keep the location they were
@@ -90,7 +92,8 @@ staleness limits, with a supervisor-visible reason.
 - [ ] GIVEN the server returns 429 for 30 s, WHEN the client drains, THEN it backs off with jitter and all events post exactly once.
 - [ ] GIVEN the local cache exceeds its staleness limit, THEN the operator is warned and, past the hard limit, blocked with a supervisor-visible reason.
 - [ ] GIVEN queue depth exceeds the configured limit, THEN the operator is blocked with a clear message visible to a supervisor.
-- [ ] GIVEN the operator switches location, THEN the cache is fully purged and re-warmed for the new location (not a delta), and the switch requires connectivity — offline, the switch is blocked. *(D-14)*
+- [ ] GIVEN the operator switches location, THEN the cache is fully purged and re-warmed for the new location (not a delta), and the switch requires connectivity — offline, the switch is refused cleanly with an operator-readable message, not queued. *(D-14/D-20)*
+- [ ] GIVEN connectivity drops **mid-warm** during a switch, THEN the app keeps the **previous** location and its cache intact and reports failure — no half-warmed state, and the outbound queue is untouched. *(D-20)*
 - [ ] GIVEN an event queued offline in location A and a subsequent switch to location B, WHEN the queue drains, THEN the event posts to **A** and the queue is not purged by the switch. *(D-14)*
 
 ---

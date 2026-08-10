@@ -303,6 +303,7 @@ Deploy `customrecord_wms_bin` — the **bin master record** (§3.3), `customreco
 - [ ] GIVEN `customrecord_wms_bin`, THEN every field in §3.3 (`custrecord_wb_*`) is present with the specified type, and `name` carries the location-code prefix (D-14); bin-code uniqueness is enforced by the migration/data-load (D-12 — no DB unique constraint), not a platform flag.
 - [ ] GIVEN the wave status list, THEN it contains exactly Pending, Picking, STAGED_FOR_PACKING, Packing, Complete, Cancelled, Exception — with no duplicate "Staged" value.
 - [ ] GIVEN a documented bin-master source with a named owner, WHEN the data load runs, THEN active bins exist in `customrecord_wms_bin` with location, type, policy, zone and pick sequence populated.
+- [ ] GIVEN an existing bin, WHEN an edit attempts to change `custrecord_wb_location`, THEN it is **rejected** — a bin's location is immutable (D-14). Relocating is deactivate-and-create-new, and creating the replacement is allowed only when the old bin is empty (`custrecord_bs_item` cleared, invariant #20).
 
 ---
 

@@ -52,7 +52,9 @@ version.*
    `customrecord_wms_config`; bin rules from `customrecord_wms_bin_policy`. (F-16, AD-13, AD-14)
 10. **Never let the dashboard query the raw scan event table.** Read metric snapshots. (F-11, AD-12)
 11. **The handheld must work with the radio off.** Offline is the expected state, not a failure
-    mode. Any scan requiring a server round-trip to validate is a design defect. (D-04, AD-09)
+    mode. Any scan requiring a server round-trip to validate is a design defect. **The sole sanctioned
+    exception is a location switch, which requires connectivity (D-20) — atomic, cleanly refused when
+    offline, and never touching the outbound queue.** No other exception is permitted. (D-04, AD-09, D-20)
 12. **Never add an event type by editing the ingestion Suitelet, mapper or reducer.** Register a
     handler. (AD-15)
 13. **`binnumber` must not appear anywhere in the codebase.** NetSuite has no bins — bins live only

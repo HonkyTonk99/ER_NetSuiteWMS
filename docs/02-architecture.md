@@ -163,7 +163,9 @@ JSON.stringify({ k: 'MOVE', locationId, sourceBinId })
 
 All PICK and PACK events for one order land in **one** reduce invocation → one `record.transform`
 → no duplicate fulfillment, and one order settled by one invocation. Move events are grouped by location +
-source bin so the Bin Transfer is constructible.
+source bin so each move settles against the right bins **within one location** (D-14) — bin moves post
+nothing to NetSuite (D-07), so there is no "Bin Transfer" record to build; the grouping is for correct
+WMS bin-state settlement.
 
 ## AD-07 — Fulfillment line aggregation (resolves F-14)
 

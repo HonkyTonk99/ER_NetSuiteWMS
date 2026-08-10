@@ -20,8 +20,9 @@ Build a **native NetSuite (SuiteScript 2.1) warehouse execution engine** that ru
 warehouse floor at 5,000 sales orders / 50,000 order lines per day, without the ERP's transactional
 ledger becoming the bottleneck. It does this by physically separating *what the operator scans* from
 *what NetSuite posts*: the handheld writes an immutable scan event and gets an instant acknowledgement;
-a background Map/Reduce pipeline later aggregates those events into Item Fulfillments, Bin Transfers
-and Inventory Adjustments. On top of that engine sit six warehouse capabilities: strict single-SKU /
+a background Map/Reduce pipeline later aggregates those events into the six ledger shapes (Item
+Fulfillment, Inventory Adjustment, Inventory Transfer, Item Receipt, WO Completion) — **bin movements
+post nothing** (D-07, AD-16). On top of that engine sit six warehouse capabilities: strict single-SKU /
 single-batch bin isolation, automated bulk-to-unit replenishment, item-commonality wave clustering,
 consolidated summary picking with a de-consolidation pack screen, picker-to-packer chain of custody,
 and a real-time performance dashboard.

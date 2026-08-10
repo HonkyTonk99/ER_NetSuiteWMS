@@ -470,6 +470,18 @@ session context**, not an afterthought:
 - **Assumption logged:** one operator holds **one location per session** (register Q-31), pending
   confirmation.
 
+**Dependency on Q-29 (bidirectional).** The standing recommendation for F-26/Q-29 is a **separate
+NetSuite location** for non-fulfillable stock. If the sponsor takes it, **that location is not a
+warehouse — it is a holding bucket.** Under D-14 as written it would wrongly appear in the operator's
+location picker, be eligible for wave generation, and get a cache warm. **If Q-29 resolves that way,
+the location model needs a location *class* (operational vs holding)** — holding locations are excluded
+from the picker, wave generation and cache warm. **Not built now** (Q-29 is with the sponsor); flagged
+so the two decisions stay linked. See Q-29 (→ D-14) and Q-33.
+
+**Follow-ups this pass raised:** D-20 (location-switch connectivity exception), F-28/Q-33 (TO outbound
+unscoped — blocks Phase 6), Q-31 (session-location assumption), Q-32 (multi-location order), and the
+Q-29 location-class dependency above.
+
 **Supersedes** the plan's implicit single-location assumption throughout.
 
 ## D-15 — Delivery is an Account Customization Project, not a SuiteApp · *accepted*
@@ -541,6 +553,28 @@ authenticated Suitelets? (c) any governance or session differences? Until answer
 
 **Supersedes/affects:** AD-01, AD-09/D-13 (delivery detail), T-3.1 (Suitelet), T-3.3 (rewritten), Q-02
 (closed), Q-30 (resolved). D-13's PWA propagation is held until (a)–(c) are confirmed.
+
+## D-20 — A location switch requires connectivity: the one sanctioned exception to invariant #11 · *accepted 2026-08-09*
+
+Invariant #11 (CLAUDE.md) is *"the handheld must work with the radio off."* D-14's cache-warm-on-select
+model carves **one** exception: **switching location requires connectivity** (the new location's
+master data must be loaded). This is recorded as a formal, bounded exception so invariant #11 is not
+quietly weakened — **all other operations remain offline-first.**
+
+**Bounds (non-negotiable):**
+- **The switch is atomic.** If connectivity drops mid-warm, the app **keeps the previous location and
+  its cache intact** and reports failure. A **half-warmed cache is a defect, not a degraded state.**
+- **An offline switch attempt is refused cleanly** with an operator-readable message — **never queued**
+  for later.
+- **The durable outbound queue is never touched** by a switch attempt, successful or failed (events
+  keep their scan-time location, D-14).
+
+**Rejected:** pre-warming *all* allowed locations at login — it inflates the T-3.4 performance budget
+for a case that occurs once a shift, at the dock, where connectivity exists.
+
+**Affects:** invariant #11 (amended to name D-20 as its sole exception), T-3.2 (switch = atomic full
+purge + re-warm), T-3.4 (login/location select), T-12.5 (tests). Q-31 (one location per session) is the
+related assumption.
 
 ---
 

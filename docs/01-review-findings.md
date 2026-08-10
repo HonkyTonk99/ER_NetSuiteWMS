@@ -245,6 +245,12 @@ binTransfer.setValue({ fieldId: 'location', value: events[0].values.custrecord_s
 `location` expects a Location internal ID; a Bin ID is passed. Also the reduce key does not include
 location, so events from different locations can be grouped into one Bin Transfer, which cannot save.
 
+> **Superseded framing (D-07).** Under D-07 there is **no NetSuite Bin Transfer record at all** — bin
+> moves post nothing, so the "location field" defect is moot. What survives is the *grouping* lesson,
+> now doubly true under D-14: move events must be grouped by location (a move never crosses locations,
+> `ERR_WMS_CROSS_LOCATION_MOVE`) and settled in WMS bin state only (T-4.3). The finding is kept for
+> traceability; its fix is "post nothing", not "set the location field correctly".
+
 ### F-14 · S4 · Fulfillment line matching breaks on duplicate items and partial picks → `T-4.2`
 
 `processFulfillmentBatch` loops SO lines, matches the first line with the same item, `break`s, and
@@ -320,8 +326,8 @@ target account and never will.
 
 **Correction (AD-16):** the ledger interface is three transaction shapes — Item Fulfillment,
 Inventory Adjustment, Inventory Transfer — and bin movements post nothing. The only variability is
-per-item tracking mode (PLAIN / LOT / SERIAL), resolved from the item record by the adapter (T-2.7).
-`binnumber` appears nowhere in the codebase.
+per-item tracking mode — **PLAIN or LOT** (SERIAL is out of scope and *rejected* by the adapter, D-08),
+resolved from the item record by the adapter (T-2.7). `binnumber` appears nowhere in the codebase.
 
 ### F-20 · S2 · Back-office movements cannot be attributed to a bin → `T-10.2`, `T-8.3`
 
@@ -507,6 +513,35 @@ tokens with expiry, per-token/per-IP rate limiting, IP allowlisting where feasib
 that can only create scan events and read reference data, and audit logging. **This finding must be
 carried into the pre-go-live security review** (the endpoint is the largest new attack surface the
 programme introduces) and re-tested whenever the auth code changes.
+
+### F-28 · S1 · Inter-location movement is mandated but has no WMS execution path → **Q-33** *(blocks Phase 6 scope)*
+
+*Raised 2026-08-09, arising from D-14.*
+
+D-14 **forbids cross-location movement in the WMS** and routes inter-location stock movement through a
+**NetSuite Transfer Order** (`ERR_WMS_CROSS_LOCATION_MOVE`). D-09 put Transfer Order **receipt** in
+scope (Phase 5B). **Nothing anywhere scopes Transfer Order *outbound*** — the picking, staging and
+shipping of a TO *out of the source location*. Outbound is scoped to **Sales Orders** throughout
+Phases 6–8 (wave clustering, summary pick, pack, custody all assume a sales order).
+
+**As the plan stands, D-14 mandates a movement path the WMS cannot execute:** stock physically leaves a
+warehouse with no WMS pick, so **WMS bin state at the source is never decremented for the transfer** —
+it goes stale exactly where the WMS is the only record of bin contents (D-07). This is the significant
+miss D-14 introduced.
+
+**Three candidate resolutions (Q-33) — sponsor to choose; consequence on bin-state accuracy stated:**
+- **(a) TO outbound in scope** — extend wave/pick/allocation to transaction type `transferorder`
+  alongside `salesorder`. *Bin state stays accurate* (the source pick decrements it like any pick).
+  Largest build: Phases 6–8 become transaction-type-aware.
+- **(b) TO outbound handled in the NetSuite UI, outside the WMS** — back-office picks/ships the TO.
+  *Bin state at the source goes stale* until the destination receipt reconciles it (T-8.3 detects the
+  location-total drift but cannot attribute the bin, F-20). Smallest build; largest operational risk.
+- **(c) Inter-location movement out of scope for v1** — no transfers between WMS-managed locations at
+  all. *Bin state stays accurate* because the movement never happens; but it constrains operations and
+  may not match how the business runs.
+
+**Blocks Phase 6 scope definition** (not Phase 0) — the wave/pick engine cannot be designed until the
+transaction-type question is answered.
 
 ---
 

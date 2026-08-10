@@ -113,7 +113,7 @@ this section was a leftover from before that ruling. The WMS owns the bin master
 | Field | Type | Notes |
 |---|---|---|
 | `name` | Text | Bin code **prefixed with the location code** (D-14), e.g. `WH1-A-01-03`. **`externalid` = this location-prefixed code makes it platform-UNIQUE (D-12)** — no duplicate bin codes across locations |
-| `custrecord_wb_location` | List/Record → Location | NetSuite location the bin physically sits in |
+| `custrecord_wb_location` | List/Record → Location | NetSuite location the bin physically sits in. **IMMUTABLE after creation (D-14)** — it is embedded in `name` and therefore `externalid`; re-pointing it would silently orphan the naming contract and every `custrecord_bs_location` copy. Relocating a bin = **deactivate-and-create-new**, permitted only when the bin is **empty** (`custrecord_bs_item` cleared, invariant #20) |
 | `custrecord_wb_type` | List/Record | **UNIT, BULK, STAGE, RECEIVING, QUALITY, RETURN, DEFECT** (AD-14 / F-18; Q-16 closed 2026-08-09) |
 | `custrecord_wb_policy` | List/Record → `customrecord_wms_bin_policy` | Carries `singleSku`, `singleBatch`, `allowDirectPick`, `replenTarget` (AD-14) — validation loads policy, never a hardcoded type check (invariant #2) |
 | `custrecord_wb_zone` | List/Record | Wave zone constraint (AD-10) |
@@ -264,7 +264,7 @@ this record; identity flows into `custrecord_se_operator` (→ Employee).
 | `custrecord_op_pin_hash` | Free-Form Text | **Hashed** PIN (salted). **Never plaintext** (T-3.3) |
 | `custrecord_op_active` | Checkbox | Deactivating cuts the operator off; every API call checks it |
 | `custrecord_op_role` | List/Record | Picker / Packer / Supervisor — drives on-device capability |
-| `custrecord_op_allowed_locations` | Multi-select → Location | **New (D-14).** Which locations this operator may select at login. **Location is a per-session selection, not a property of the operator** — the record itself is location-agnostic (§ Location scoping) |
+| `custrecord_op_allowed_locations` | Multi-select → Location | **New (D-14).** Which locations this operator may select at login. **Location is a per-session selection, not a property of the operator** — the record itself is location-agnostic (§ Location scoping). ⚠️ **Advisory until D-19 resolves:** under Option C the Suitelet is Available-Without-Login, so there is **no platform-enforced identity** behind this field. **If Option C is confirmed, the WMS owns operator authentication end to end and this becomes a WMS-enforced control** (validated in the session-token issuance, T-3.3) — a task to write **then**, not now |
 
 > The PIN hash and the HMAC session-token secret (a script parameter) are the two secrets in the
 > system. Neither is ever returned to the browser. See T-3.3 and F-27.
