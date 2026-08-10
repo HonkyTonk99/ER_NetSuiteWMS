@@ -77,8 +77,11 @@ version.*
     set `DEFERRED` and retried — **never `FAILED` on first attempt.** Deferred is legitimate work in
     the wrong sequence; failed needs a human. Keep them distinct or the exception queue becomes
     noise. (F-25, AD-18)
-20. **A negative bin is occupied, not empty.** Never test `qty <= 0` for emptiness — use `qty === 0`.
-    A negative bin accepts only the SKU and lot already recorded against it. (F-25)
+20. **A bin is EMPTY when `custrecord_bs_item` is cleared — not when quantity equals zero.** Never test
+    emptiness with a float comparison: `custrecord_bs_qty` is a Decimal, and UOM conversion or partial
+    units can leave fractional residue (a bin at `0.0000001` would read as permanently occupied). A bin
+    with negative quantity and an item still set is **OCCUPIED AND ANOMALOUS**, and accepts only the SKU
+    and lot already recorded against it. (F-25)
 
 ## Conventions
 

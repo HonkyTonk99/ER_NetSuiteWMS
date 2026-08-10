@@ -302,6 +302,40 @@ putaway) and the **ordering case** from F-24 — receive and pick the same stock
 
 ---
 
+### T-12.5 — Browser-side (PWA) test strategy
+**Depends on:** T-3.2, T-3.4, T-3.5 · **Resolves:** gap — nothing tests the client · *(new 2026-08-09)*
+
+**Narrative**
+As the QA lead, I want the PWA's offline and sync behaviour tested automatically, so that the failure
+modes most likely to bite on the warehouse floor are caught before UAT rather than during it.
+
+**Requirement**
+T-12.4 covers SuiteScript regression; **nothing currently tests the browser client.** The PWA's
+load-bearing behaviours are exactly the ones that are hard to get right and invisible in a
+happy-path demo. Automate (headless browser / device lab) at least:
+
+- **Offline operation, radio off** — a full pick run completes with the network disabled; no scan
+  requires a server round-trip to validate (AD-09 / invariant #11).
+- **Durable-queue survival** — events queued offline survive **app kill and battery pull** (IndexedDB
+  + `navigator.storage.persist()`, D-13); on relaunch the queue is intact and drains.
+- **Cache warm-up on location select** — switching location warms the new location's master-data
+  cache and requires connectivity (D-14); operating offline *within* a location works.
+- **Sync-on-reconnect** — a device back from N minutes offline drains via the **batch endpoint** in few
+  round-trips, exactly once, no duplicates, honouring 429 backoff (T-3.2).
+- **Reconnect conflict handling** — offline events invalid on arrival route to the exception queue,
+  not silently dropped or posted (T-3.5).
+- **Idempotency across retry** — the same UUID replayed after a crash yields one posting (`externalid`
+  + committer dedupe, AD-04).
+
+**Acceptance**
+- [ ] GIVEN the radio off for a full pick run, THEN every task completes and no scan blocks on the server (automated).
+- [ ] GIVEN the app is killed / battery pulled with a non-empty queue, WHEN it relaunches, THEN the queue is intact and drains exactly once with no duplicates.
+- [ ] GIVEN a location switch with no connectivity, THEN the operator is warned/blocked per policy; with connectivity, the new cache warms.
+- [ ] GIVEN offline events that conflict on reconnect, THEN they raise exceptions rather than posting.
+- [ ] GIVEN the suite, THEN it runs in CI (headless) and blocks merge on failure.
+
+---
+
 # PHASE 13 — UAT, Training & Cutover
 
 ### T-13.1 — UAT with real warehouse staff

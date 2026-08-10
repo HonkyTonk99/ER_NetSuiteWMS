@@ -258,6 +258,18 @@ compares POSTED events against actual ledger movements and raises exceptions for
 The M/R `summarize` stage upserts `customrecord_wms_metric_snapshot` (per operator, per team, per
 interval). The dashboard reads snapshots. Raw event scanning is never on the dashboard's path.
 
+## AD-13 — Delivery mechanics
+
+- **SDF project — an Account Customization Project, not a SuiteApp (D-15)**, SuiteScript 2.1,
+  source-controlled. Scripts ship open. No point-and-click customisation that is not captured in the
+  project.
+- **Environments:** DEV sandbox → UAT/staging sandbox (production data refresh) → Production.
+- **Unit tests** via a mocked-module harness (jest + SuiteScript module stubs) for pure logic —
+  clustering, aggregation, allocation, similarity. These are the parts worth unit-testing; record
+  I/O is covered by integration tests in sandbox. The **browser/PWA** has its own test strategy (T-12.5).
+- **Naming:** scripts `wms_<type>_<purpose>.js` (`rl_`, `mr_`, `ss_`, `ue_`, `sl_`, `cs_`, `lib_`).
+- **Every script** declares `@NApiVersion 2.1` and `@NModuleScope SameAccount`.
+
 ## AD-14 — Bin policy by bin type *(new, per D-05; resolves F-18)*
 
 The 1-SKU/1-batch rule is currently a constant in code and a two-value list in the schema. That
@@ -443,18 +455,11 @@ supervisor queue with noise that resolves itself, and train people to ignore it.
 either: small transient negatives during the queue window are normal, while persistent or large
 negatives raise a `NEGATIVE_BIN_STATE` exception on configurable magnitude and age thresholds.
 
-**A negative bin is treated as occupied, not empty.** The naive test — `qty <= 0` means the bin is
-free — would allow a different SKU into a bin that is already in an error state, compounding the
-first fault and destroying the evidence needed to diagnose it. A negative bin accepts only the SKU
-and lot already recorded against it until a supervisor resolves it.
+**Emptiness is `custrecord_bs_item` cleared — never a quantity comparison (invariant #20).** Testing
+`qty <= 0` (or `qty === 0`) is wrong two ways: `qty <= 0` would let a different SKU into a **negative**
+bin that is already in an error state, compounding the fault; and any float compare is fragile because
+`qty` is a Decimal and UOM/partial-unit residue (e.g. `0.0000001`) would read as permanently occupied.
+A bin whose item is still set — including a negative one — is **occupied and, if negative, anomalous**,
+and accepts only the SKU and lot already recorded against it until a supervisor resolves it.
 
-## AD-13 — Delivery mechanics## AD-13 — Delivery mechanics
-
-- **SDF project**, SuiteScript 2.1, source-controlled. No point-and-click customisation that is not
-  captured in the project.
-- **Environments:** DEV sandbox → UAT/staging sandbox (production data refresh) → Production.
-- **Unit tests** via a mocked-module harness (jest + SuiteScript module stubs) for pure logic —
-  clustering, aggregation, allocation, similarity. These are the parts worth unit-testing; record
-  I/O is covered by integration tests in sandbox.
-- **Naming:** scripts `wms_<type>_<purpose>.js` (`rl_`, `mr_`, `ss_`, `ue_`, `sl_`, `cs_`, `lib_`).
-- **Every script** declares `@NApiVersion 2.1` and `@NModuleScope SameAccount`.
+*(AD-13 moved into numeric order between AD-12 and AD-14.)*

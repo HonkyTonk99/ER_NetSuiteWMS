@@ -436,8 +436,10 @@ thresholds on magnitude and age.
 **3. Negative interacts with the bin isolation rule, and the naive reading is wrong.** A bin at
 −3 of SKU A has `qty <= 0`, so a literal "empty bin accepts anything" test would let SKU B be put
 away into it — compounding one error with another and losing the evidence needed to diagnose the
-first. **A bin with negative quantity is treated as occupied and anomalous**, not empty: it accepts
-only the SKU and lot already recorded against it, until a supervisor resolves it.
+first. **Emptiness must be tested as `custrecord_bs_item` cleared, never as a quantity comparison**
+(invariant #20 — a float compare on the Decimal `qty` is also fragile under UOM/partial-unit residue).
+**A bin with negative quantity and an item still set is treated as occupied and anomalous**, not empty:
+it accepts only the SKU and lot already recorded against it, until a supervisor resolves it.
 
 ### F-24 · S2 · No ordering guarantee between receipt and consumption → `T-5.8`, `T-4.7`
 

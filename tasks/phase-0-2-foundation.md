@@ -419,8 +419,10 @@ staging area.
 `check(binId, itemId, lotNumber)` loads the bin's policy (AD-14 table) from cache and applies it
 against the projection from T-2.3. **One code path for all bin types** — no `if (binType === 'UNIT'
 || binType === 'BULK')` anywhere in the codebase. Throws
-`ERR_WMS_BIN_CONSTRAINT_VIOLATION` naming the bin, conflicting item and conflicting lot. Empty bin
-always passes. `custrecord_wb_blocked` fails with a distinct code. Policy is a pure function of
+`ERR_WMS_BIN_CONSTRAINT_VIOLATION` naming the bin, conflicting item and conflicting lot. An **empty
+bin always passes — and "empty" means `custrecord_bs_item` is cleared, never a `qty` comparison**
+(invariant #20; a Decimal float compare is fragile and a negative bin with an item set is *occupied*).
+`custrecord_wb_blocked` fails with a distinct code. Policy is a pure function of
 `(policy, currentState, proposedItem, proposedLot)` — fully unit-testable with no NetSuite account.
 
 **Acceptance**
@@ -430,6 +432,7 @@ always passes. `custrecord_wb_blocked` fails with a distinct code. Policy is a p
 - [ ] GIVEN the BULK policy is changed to `singleBatch: false` in configuration, WHEN a mixed-batch putaway is retried, THEN it succeeds **with no code deployment**.
 - [ ] GIVEN a bin with **negative** quantity, WHEN a different SKU is validated, THEN it is rejected with `ERR_WMS_BIN_NEGATIVE_STATE` — the bin is treated as occupied, not empty.
 - [ ] GIVEN a bin with negative quantity, WHEN the **same** SKU and lot are validated, THEN it passes so corrective putaway is possible.
+- [ ] GIVEN a bin whose item is set but `qty` is a tiny fractional residue (e.g. `0.0000001`), WHEN a different SKU is validated, THEN it is **rejected** — emptiness is decided by `custrecord_bs_item` being cleared, not by `qty` (invariant #20).
 - [ ] GIVEN a bin holding stock NetSuite has committed elsewhere, THEN it is treated as **occupied** — the WMS tracks physical quantity only and never sees NetSuite's available/committed split (Q-10 closed, moot).
 - [ ] GIVEN the validator, THEN it is exercised by unit tests covering every policy combination without a NetSuite connection.
 

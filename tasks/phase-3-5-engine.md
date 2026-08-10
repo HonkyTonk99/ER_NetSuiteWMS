@@ -143,7 +143,7 @@ write endpoint — accepted, mitigated by these controls, must be in the pre-go-
 ---
 
 ### T-3.4 — Handheld application (task list, scan flows, optimistic UI)
-**Depends on:** T-0.3 (Q-01), T-3.1, T-3.2, T-3.3 · **Implements:** AD-09
+**Depends on:** T-3.1, T-3.2, T-3.3 · **Implements:** AD-09, D-13 *(Q-01 closed — PWA)*
 
 **Narrative**
 As a picker, I want a scanner app that shows me my next task and confirms each scan instantly, so
@@ -157,10 +157,21 @@ success renders in < 150 ms. Barcode symbologies and scan-to-field mapping defin
 Explicit sad paths: wrong bin scanned, wrong SKU, wrong lot, insufficient quantity, unknown barcode.
 Large-touch-target, glove-friendly layout.
 
+**SPA performance budget (stated ceilings, agreed with the sponsor).** The PWA is served from NetSuite
+and first-loaded over warehouse Wi-Fi on the **target rugged Android device** — the login-and-warm-up
+experience is governed by this budget and nothing else in the plan constrains it. Measure on the
+target device, not a developer laptop:
+- **JS/CSS bundle ≤ 500 KB gzipped** (app shell); assets lazy-loaded beyond that.
+- **Cold first load (empty cache) to interactive ≤ 3 s** over representative warehouse Wi-Fi.
+- **Login → cache warmed → first task actionable ≤ 10 s** (includes the D-14 location cache warm).
+- **Warm load (service-worker cached shell) ≤ 1 s.**
+These are the agreed ceilings; regressions past them fail the build (measured in T-12.5).
+
 **Acceptance**
 - [ ] GIVEN a directed pick task, WHEN the operator scans the correct bin, SKU, lot and quantity, THEN the UI confirms and advances in < 150 ms measured on the target device.
 - [ ] GIVEN the operator scans a bin other than the directed bin, THEN the app blocks with a clear message and does not enqueue an event.
 - [ ] GIVEN the operator cannot find the stock, WHEN they select short pick, THEN a SHORT_PICK event is enqueued with quantity found and reason.
+- [ ] GIVEN the target device over warehouse Wi-Fi, THEN bundle size, cold first-load, warm-load and login-to-first-task are measured and all within the stated budget.
 - [ ] GIVEN 30 minutes of continuous use, THEN no memory growth or degradation is observed on the target device.
 
 ---
