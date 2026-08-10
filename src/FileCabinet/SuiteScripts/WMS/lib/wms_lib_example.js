@@ -2,7 +2,7 @@
  * @NApiVersion 2.1
  * @NModuleScope SameAccount
  *
- * wms_lib_example — SCAFFOLD ONLY (T-0.5).
+ * wms_lib_example - SCAFFOLD ONLY (T-0.5).
  *
  * This module exists solely to prove the test harness works: a SuiteScript 2.1
  * AMD module whose pure logic is unit-testable with no NetSuite account, and
@@ -15,7 +15,7 @@
  */
 define(['N/error'], function (error) {
     /**
-     * Pure function — representative of the kind of logic Phase 2 lib_ modules
+     * Pure function - representative of the kind of logic Phase 2 lib_ modules
      * will hold and unit-test without a NetSuite account. Sums a list of numbers.
      *
      * Uses N/error on the failure path so the harness demonstrably resolves the

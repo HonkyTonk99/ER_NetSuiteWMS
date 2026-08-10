@@ -33,7 +33,10 @@ share-≥1-SKU filter. `buildSkuIndex(orders)` → `Map<skuId, orderId[]>` **bui
 count exceeds the cap. `cluster(orders, opts)` with `{threshold, maxOrders, maxLines, maxUnits, zone,
 shipByBucket}` from **per-location config** (§3.10 precedence — cart capacity differs by warehouse) —
 **the single source of the threshold value** (F-16). Deterministic seed ordering by (shipBy, orderId)
-so runs are reproducible. Zone names are **location-scoped** (may repeat across locations).
+so runs are reproducible. Zone names are **location-scoped** (may repeat across locations). The input
+is the **order-projection contract (data model section 3.12)** — the held consumer (T-6.2) must satisfy
+it, not the reverse. `fanOutCap` is a **modelling choice (D-26)**: excluding a very-high-fan-out SKU is
+stopword removal, with the consequence that orders sharing *only* such SKUs may never cluster.
 
 **Acceptance**
 - [ ] GIVEN orders A={1,2,3} and B={2,3,4}, THEN `jaccard` returns 0.5 exactly.
@@ -74,6 +77,17 @@ similarity score, line and unit counts, status Pending. Orders already on an ope
 An order's fulfilling stock location determines its wave location; an order that cannot be served from
 a single location is out of scope for this release (flag, do not silently split).
 
+**Build the projection to the defined contract (data model section 3.12), not an ad-hoc shape.**
+`getInputData`/`reduce` assemble each order into the order-projection contract that `cluster()` consumes;
+**this task satisfies the contract, it does not reshape the tested module.** `shipByBucket` is derived
+here from the **config-defined ship-by bucketing boundaries** (section 3.10) — never hard-coded.
+
+**Surface skipped SKUs to a supervisor (D-26).** `cluster()` returns `diagnostics.skippedSkus` — the
+SKUs excluded because they exceed `fanOutCap` (a modelling choice, not just a perf cap). A cap nobody
+sees reads as full coverage, so a run that skipped any SKU must record that fact **where a supervisor can
+see it** (a wave-run summary / metric snapshot naming the skipped SKUs and their order counts), so a
+mis-set cap that excludes real signal is visible rather than silent.
+
 **Acceptance**
 - [ ] GIVEN pending sales orders sharing ≥ the configured threshold of SKUs **in the same location**, WHEN the pipeline runs, THEN they are grouped into a single Wave Pick record with its `custrecord_wave_location` set. *(FRD TC-WAV-01, D-14)*
 - [ ] GIVEN two orders that share every SKU but draw from **different locations**, WHEN the pipeline runs, THEN they are placed in **separate** waves.
@@ -81,6 +95,8 @@ a single location is out of scope for this release (flag, do not silently split)
 - [ ] GIVEN an open **Transfer Order** with committed lines at its source location, WHEN the pipeline runs, THEN its lines are eligible and cluster through the **same engine** as sales-order lines (parameterised by transaction type), producing a wave in the source location. *(D-22)*
 - [ ] GIVEN a sales order line with zero committed quantity, WHEN clustering runs, THEN it is excluded from every wave.
 - [ ] GIVEN a line ordered 10 and committed 4, WHEN a wave is built, THEN wave demand for that line is 4.
+- [ ] GIVEN a run where `cluster()` returns a non-empty `skippedSkus`, THEN the pipeline records the skipped SKUs and their order counts where a **supervisor can see them** — the fan-out cap is never silent. *(D-26)*
+- [ ] GIVEN the projection handed to `cluster()`, THEN it conforms to the order-projection contract (data model section 3.12), and `shipByBucket` is derived from the config ship-by bucketing boundaries, not a literal. *(section 3.10 / 3.12)*
 - [ ] GIVEN 5,000 pending orders, WHEN the pipeline runs, THEN it completes without governance or timeout failure.
 - [ ] GIVEN a created wave, THEN its similarity score, line count and unit count are populated and its size is within cart capacity.
 

@@ -240,9 +240,10 @@ Seeded per the AD-14 table. Changing the bulk-bin rule later is an edit here, no
 ## 3.10 `customrecord_wms_config` — **new** *(global defaults + optional per-location override, D-14)*
 
 Settings record removing every magic number from code: similarity threshold, max cluster size, cart
-tote capacity, SKU fan-out cap, M/R batch size, event retention days, replenishment scan interval,
-ingestion advisory-check toggle, dashboard refresh seconds, session-token TTL, rate-limit thresholds.
-*(`lock TTL seconds` removed — locks withdrawn, D-12.)*
+tote capacity, SKU fan-out cap, **wave ship-by bucketing boundaries** (the time windows the consumer
+uses to derive `shipByBucket` — section 3.12), M/R batch size, event retention days, replenishment scan
+interval, ingestion advisory-check toggle, dashboard refresh seconds, session-token TTL, rate-limit
+thresholds. *(`lock TTL seconds` removed — locks withdrawn, D-12.)*
 
 **Not a single global row (D-14).** There is a **global-defaults row** plus **optional per-location
 override rows** (`custrecord_cfg_location` — blank on the global row, set on an override). **Precedence:
@@ -268,6 +269,34 @@ this record; identity flows into `custrecord_se_operator` (→ Employee).
 
 > The PIN hash and the HMAC session-token secret (a script parameter) are the two secrets in the
 > system. Neither is ever returned to the browser. See T-3.3 and F-27.
+
+## 3.12 Order projection contract — **new (defines the `wms_lib_clustering.js` input, T-6.1)**
+
+Not a stored custom record — a **defined in-memory contract** between the held wave-generation pipeline
+(`wms_mr_wave_allocation.js`, T-6.2) and the pure clustering module (`wms_lib_clustering.js`, T-6.1).
+Recorded here because the shape was first written as a module comment during the Pass-2 carve-out, and a
+contract invented in a comment gets bent to fit whatever the consumer happens to build. **The held
+consumer must satisfy this contract; the tested module is not reshaped to match the consumer.**
+
+The pipeline builds one projection object per eligible order line-set and passes an array to
+`cluster(orders, opts)`:
+
+| Field | Required | Type | Notes |
+|---|---|---|---|
+| `orderId` | **yes** | string / number | Unique per order. Ties are broken by this for determinism |
+| `location` | **yes** | string | Location code. Orders are **partitioned by location first** — a wave never spans locations (D-14) |
+| `lines` | **yes** | `[{ skuId, qty }]` | The SKU set drives Jaccard; `qty` sums to the unit count for the `maxUnits` cap |
+| `shipBy` | optional | ISO string / number | Seed ordering is `(shipBy, orderId)`; absent sorts last |
+| `transactionType` | optional | string | `salesorder` / `transferorder`. **OPAQUE to clustering (D-22)** — carried only for the held pack/ship step |
+| `zone` | optional | string | Clusters merge only equal zones; **location-scoped** (may repeat across locations) |
+| `shipByBucket` | optional | string | Clusters merge only equal buckets. **Its boundaries are NOT a clustering concern** — the consumer derives this field from the **config-defined ship-by bucketing boundaries (section 3.10)**, so the bucketing rule is a parameter, never hard-coded (invariant #9) |
+
+`opts` (also from per-location config, section 3.10; never hard-coded — invariant #9):
+`{ threshold, maxOrders, maxLines, maxUnits, fanOutCap }`. See **D-26** for why `fanOutCap` is a
+modelling choice, and its consequence that orders sharing only high-fan-out SKUs may never cluster.
+
+**Eligibility is upstream.** Only NetSuite-committed lines enter this projection (F-22, AD-17); the
+clustering module trusts the array it is given and does not re-check commitment.
 
 ---
 

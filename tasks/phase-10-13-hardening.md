@@ -217,10 +217,19 @@ data volume** — a load test against an empty account proves nothing about sear
 event rows. Instrument: response percentiles, error rates by code, 429 counts, event-to-ledger
 latency, concurrency utilisation, M/R queue depth.
 
+**Reconcile measured governance against the declared handler estimates (T-2.6 / D-23).** Each event
+handler declares a `governanceEst` (nominal cost metadata, accepted as declared, not a tuning value).
+This harness is where those declarations meet reality: measure the actual governance units each event
+type consumes and **reconcile against the declared figures**. Divergence beyond a **stated tolerance
+(default ±25%, itself a `customrecord_wms_config` value)** is treated as a **finding** — either the
+declaration is corrected, or the divergence is explained — because the F-29 batch-size bound and the
+F-17 yield decision are only as safe as these estimates.
+
 **Acceptance**
 - [ ] GIVEN the harness, WHEN run against a production-representative sandbox, THEN it sustains the full 10-hour profile and reports all instrumented metrics.
 - [ ] GIVEN the run, THEN 429 counts and concurrency utilisation are reported against the T-0.2 budget.
 - [ ] GIVEN the harness, THEN it is repeatable in CI so regressions are caught before release.
+- [ ] GIVEN measured governance per event type, THEN it is reconciled against each handler's declared `governanceEst` (T-2.6), the declarations are updated to match, and any residual divergence beyond the stated tolerance is raised as a finding. *(D-23)*
 
 ---
 

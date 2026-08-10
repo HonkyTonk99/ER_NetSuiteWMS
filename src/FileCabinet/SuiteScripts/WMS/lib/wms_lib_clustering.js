@@ -25,7 +25,17 @@
  *   - No hard-coded tuning (invariant #9): `threshold`, `maxOrders`, `maxLines`,
  *     `maxUnits`, `fanOutCap` all arrive in `opts` from per-location config.
  *
- * Order projection contract (built by the held caller):
+ * `fanOutCap` is a MODELLING choice, not just a performance cap (D-26): a SKU on
+ * a very large share of orders carries almost no discriminating signal, so it is
+ * excluded from candidate generation (stopword removal). CONSEQUENCE: two orders
+ * that share ONLY high-fan-out SKUs are never compared, and therefore may never
+ * cluster - they fall through to singleton (or smaller) waves. That is intended,
+ * not a bug. The skipped SKUs are returned in `diagnostics.skippedSkus`; the held
+ * caller (T-6.2) must surface them where a supervisor can see them (D-26).
+ *
+ * Order projection contract: defined in docs/03-data-model.md section 3.12. The
+ * HELD consumer (wms_mr_wave_allocation.js, T-6.2) must satisfy that contract;
+ * this module is not bent to fit the consumer. Summary of the fields consumed:
  *   {
  *     orderId,            // unique id (string or number)
  *     location,           // location code - orders are partitioned by this
@@ -33,7 +43,9 @@
  *     shipBy,             // optional; ISO string or number, drives seed order
  *     transactionType,    // optional; OPAQUE here (D-22)
  *     zone,               // optional; clusters only merge equal zones
- *     shipByBucket        // optional; clusters only merge equal buckets
+ *     shipByBucket        // optional; clusters only merge equal buckets; its
+ *                         //   boundaries come from config, NOT from this module
+ *                         //   (the consumer derives it - section 3.12 / section 3.10)
  *   }
  */
 define([], function () {

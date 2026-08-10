@@ -739,6 +739,26 @@ inventory truth with no recovery path** — the operator already moved the goods
 T-12.5 (acceptance: previous-version client drains, then is refused new work). Relates to invariant #19
 (never lose a scan) and D-13.
 
+## D-26 — `fanOutCap` is a modelling choice (stopword removal), not a performance cap · *accepted 2026-08-10*
+
+`generateCandidatePairs` (T-6.1) skips any SKU carried by more orders than `fanOutCap`. That is not
+merely a throughput lever: **a SKU appearing in a very large share of orders carries almost no
+discriminating signal** — clustering on it groups orders that have nothing meaningful in common. Excluding
+it is the warehouse equivalent of **stopword removal**, and it is the right call. `fanOutCap` **stays
+parameterised** (config-injected per location, invariant #9). Two consequences must be **written down,
+not left implicit**:
+
+- **Orders that share *only* high-fan-out SKUs are never compared, and therefore may never cluster.**
+  They fall through to singleton (or smaller) waves. This is stated plainly in the `wms_lib_clustering.js`
+  module contract so nobody reads a skipped comparison as a bug.
+- **`skippedSkus` must surface operationally, not only in the returned diagnostics object.** A cap
+  nobody sees reads as full coverage. The held wave-generation task (**T-6.2**) must record, where a
+  **supervisor can see it**, that a run skipped SKUs and which ones — so a mis-set cap (too low, excluding
+  real signal) is visible rather than silent.
+
+**Affects:** `wms_lib_clustering.js` (contract note), T-6.2 (supervisor-visible skip reporting), F-10.
+Relates to the order-projection contract (section 3.12, data model).
+
 ---
 
 ## Superseded

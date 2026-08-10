@@ -2,7 +2,7 @@
  * @NApiVersion 2.1
  * @NModuleScope SameAccount
  *
- * wms_lib_event_registry — declarative event handler registry (T-2.6, AD-15).
+ * wms_lib_event_registry - declarative event handler registry (T-2.6, AD-15).
  *
  * Pure logic, carved out of the T-0.3 gate by D-23. Imports NO `N/` module
  * (CI-enforced). The registry mechanism and the central group-key serialisation
@@ -18,7 +18,7 @@
  *   - Invariant #5: a handler's `groupKey` returns an OBJECT; keys are serialised
  *     CENTRALLY here, never by string concatenation. Enum values contain
  *     underscores (REPLEN_MOVE, BIN_TRANSFER), which a `parts.join('_')` scheme
- *     cannot round-trip (F-12) — JSON of a canonically-ordered object can.
+ *     cannot round-trip (F-12) - JSON of a canonically-ordered object can.
  *   - Error shape (D-23): a field/business validation failure is a RETURNED
  *     verdict ({ ok:false, reasonCode, field }); a programmer error (a malformed
  *     handler, an unknown type) throws a plain `Error` with an ERR_WMS_* `name`.
@@ -38,7 +38,7 @@ define([], function () {
 
     /**
      * A commit stub shared by every default handler. The real commit body posts
-     * to the NetSuite ledger and therefore needs `N/` modules — it is OUT of the
+     * to the NetSuite ledger and therefore needs `N/` modules - it is OUT of the
      * D-23 carve-out. Calling it at this layer is a programmer error.
      */
     function commitNotImplemented() {
@@ -97,7 +97,7 @@ define([], function () {
         }
 
         /**
-         * Validate an event: required fields FIRST (F-13 — rejected before any
+         * Validate an event: required fields FIRST (F-13 - rejected before any
          * record I/O, with a field-level message), then the handler's own
          * business validation. Both are returned verdicts, never thrown.
          * @returns {{ok: boolean, reasonCode?: string, field?: string}}
@@ -244,7 +244,7 @@ define([], function () {
             commit: commitNotImplemented,
             governanceEst: 5,
         },
-        // Telemetry (scan-accuracy metric, T-1.2) — no ledger posting
+        // Telemetry (scan-accuracy metric, T-1.2) - no ledger posting
         SHORT_PICK: {
             requiredFields: ['waveId', 'orderId', 'orderLineKey', 'skuCode', 'locationId'],
             validate: alwaysValid,
