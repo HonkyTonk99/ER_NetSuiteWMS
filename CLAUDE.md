@@ -120,5 +120,11 @@ Inbound (PO / TO / Work Order receipt and putaway) is **in scope** since D-09 �
 **Do not begin implementation before `T-0.3` closes the remaining register.** Several tasks are
 deliberately unbuildable until a human answers a question the source FRD never asked.
 
+**Exception — D-23 (2026-08-10):** exactly three pure-logic tasks are carved out of the T-0.3 gate and
+may be built and unit-tested now — **T-6.1** (wave clustering), **T-2.3b** (bin policy evaluation) and
+**T-2.6** (event handler registry). The carve-out is mechanically bounded: a carved-out file may import
+**no `N/` module** (not even `N/error`), enforced by `scripts/guard-carveout-imports.js` in
+`npm run verify`. These three only — a fourth needs a new ruling. Everything else stays held.
+
 Read `docs/05-decisions-log.md` before `docs/01-review-findings.md` — it records which findings have
 been overruled, rescoped or resolved, and why.

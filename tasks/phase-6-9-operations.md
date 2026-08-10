@@ -7,6 +7,15 @@
 ### T-6.1 — `wms_lib_clustering.js` — similarity and cluster construction
 **Depends on:** T-2.5 · **Resolves:** F-10, F-16 · **Implements:** AD-10
 
+> **Carved out of the T-0.3 gate — buildable now (D-23, 2026-08-10).** Pure logic, no SuiteScript
+> dependency. Conditions of the carve-out: the module imports **no `N/` module** (not even `N/error`
+> — signal failure with a plain thrown `Error`; CI-enforced by `guard-carveout-imports.js`); **unit
+> tests of the acceptance criteria below are the deliverable, not an extra**; **no hard-coded tuning**
+> — `threshold`, `maxOrders`, `maxLines`, `maxUnits`, cart capacity all arrive as parameters (invariant
+> #9); **transaction type is opaque** (state it in the module header — clustering never branches on
+> `salesorder`/`transferorder`, so D-22 leaves it untouched). **Do not write the consuming
+> `wms_mr_wave_allocation.js` (T-6.2) — that stays held.**
+
 **Narrative**
 As a warehouse planner, I want orders grouped by how much stock they share, so that one picker walk
 serves many orders instead of one.

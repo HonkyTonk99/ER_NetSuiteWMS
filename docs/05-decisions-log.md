@@ -1,6 +1,6 @@
 # 05 — Decisions Log
 
-Rulings from the sponsor (TK), 2026-08-07 to 2026-08-08. These override the corresponding entries in
+Rulings from the sponsor (TK / Todd), 2026-08-07 to 2026-08-10. These override the corresponding entries in
 `01-review-findings.md`, `02-architecture.md` and `04-open-questions.md`. Superseded text in those
 files is marked and cross-referenced here rather than deleted, so the reasoning stays auditable.
 
@@ -635,6 +635,50 @@ stock between locations, so the WMS must pick, stage and ship transfer orders ou
 
 **Affects:** delivery plan + phase scope (adds tasks to Phases 6–7, reshapes Phase 5B), T-2.7, T-6.1/2,
 T-6.3, T-7.1, AD-18, invariant #18. Raises **F-30**, **Q-36**, **Q-37**.
+
+## D-23 — Pure-logic tasks are carved out of the T-0.3 gate · *accepted 2026-08-10, with a hard machine-enforced boundary*
+
+The rule *"no implementation before the register (T-0.3) closes"* exists because most tasks depend on
+unanswered questions. **Exactly three do not:** wave clustering (**T-6.1**), bin policy evaluation
+(**T-2.3b**) and the event handler registry (**T-2.6**). They are pure functions over data structures
+already fixed by the data model, import no SuiteScript module, touch no record, and none of the open
+questions changes their inputs or outputs — clustering in particular treats transaction type as
+**opaque data**, so even the D-22 transfer-order expansion leaves it untouched. Building them now costs
+nothing if an answer surprises us and buys the most: clustering is the hardest algorithmic component in
+the system and the one most likely to be wrong first time.
+
+**These three, and no others. D-23 creates no precedent** — a fourth task joining the carve-out
+requires a **new ruling** (a new D-number), not an appeal to this one.
+
+**The boundary is not "pure logic" as a judgement call — it is mechanical and CI-enforced:**
+
+- **A carved-out file may not import ANY `N/` module.** No `N/record`, `N/search`, `N/runtime`,
+  `N/cache` — **not even `N/error`.** A file that needs a SuiteScript module is, by definition, outside
+  the carve-out and stays held until the register closes. (Failure is therefore signalled by a plain
+  thrown `Error`; the `ERR_WMS_*` name/message convention is applied by the not-yet-built entry-point
+  caller, not inside the pure module.)
+- **Enforced in `scripts/guard-carveout-imports.js`, wired into `npm run verify`.** The guard holds a
+  closed allowlist of the three file paths and fails the build if any of them imports an `N/` module.
+  It is in place **before** the first line is written, so the boundary cannot be crossed by accident,
+  and a fourth path can only be added by a deliberate edit tied to a new ruling.
+
+**Also required for the three (conditions of the carve-out):**
+
+- **Unit-test coverage of the acceptance criteria already written for each task — the tests are the
+  deliverable as much as the functions are.**
+- **No hard-coded tuning values (invariant #9).** Thresholds, capacities and cart limits arrive as
+  **function parameters**, sourced from `customrecord_wms_config` by the caller later — never baked into
+  the pure module.
+- **Clustering treats transaction type as opaque** — state this in the module header so no one couples
+  it to `salesorder`/`transferorder`.
+- **The consuming entry-point scripts (Suitelets, Map/Reduce, etc.) do not exist yet — do not write
+  them.** The carve-out is the pure logic only.
+
+**Phase 1 remains held for everything else.** This ruling narrows the T-0.3 gate; it does not open it.
+
+**Affects:** T-0.3 (three tasks no longer gated), T-6.1 / T-2.3b / T-2.6 (buildable now, under the
+conditions above), CLAUDE.md Working-order note, new CI guard `guard-carveout-imports.js`, `package.json`
+verify chain. Enables planning **Pass 2** (the pure-logic build), which runs as its own pass.
 
 ---
 

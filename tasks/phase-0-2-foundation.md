@@ -96,10 +96,21 @@ and D-04's offline-first mandate has narrowed the viable options.
 Q-24 (costing) and Q-26 (negative inventory) are **closed by D-11**. Remaining: Q-16 bin types,
 Q-17 offline duration, Q-25 manufacturing transaction type, Q-27 over-receipt tolerance.
 
+*Updated 2026-08-10:* the remaining register is now organised into three owner-grouped sheets in
+`04-open-questions.md` — **Sheet A (NetSuite developer)** Q-35, Q-40…Q-44; **Sheet B (sponsor)** Q-29,
+Q-31, Q-32, Q-36, Q-37, Q-45, Q-46 and the location class (D-14); **Sheet C (you / Todd)** T-0.1 census,
+T-0.4 migration, this task, and Q-47 environment. Sheet-B items carry an *assumption-if-no-response*
+fallback with a review date; Sheet-A items have **no safe default** and stay held.
+
+**D-23 (2026-08-10) narrows — does not open — this gate.** Three pure-logic tasks (T-6.1, T-2.3b,
+T-2.6) are carved out and buildable before the register closes, under a CI-enforced no-`N/`-import
+boundary. Every other task stays held on this register. A fourth carve-out needs a new ruling.
+
 **Acceptance**
 - [ ] GIVEN the register, WHEN the decision workshop concludes, THEN every question has a recorded decision, owner and date, or an explicit "deferred, out of scope for release 1".
 - [ ] GIVEN Q-01, THEN it is decided (not deferred) before Phase 3 is scheduled.
 - [ ] GIVEN Q-16, Q-17, Q-25 and Q-27, THEN each has a named owner and a target date before its dependent phase begins.
+- [ ] GIVEN Sheets A, B and C, THEN every open question carries a named owner and a date; Sheet-B fallbacks carry a review date past which the recommendation becomes a recorded assumption; the three D-23 carve-out tasks are explicitly noted as not gated by this register.
 
 ---
 
@@ -412,6 +423,14 @@ the next putaway of any SKU is accepted.
 ### T-2.3b — `wms_lib_bin_policy.js` — policy-driven bin validation
 **Depends on:** T-2.3, T-1.3 · **Resolves:** F-18 · **Implements:** AD-14
 
+> **Carved out of the T-0.3 gate — buildable now (D-23, 2026-08-10).** Pure function of
+> `(policy, currentState, proposedItem, proposedLot)`. Conditions: imports **no `N/` module** (not even
+> `N/error` — throw a plain `Error`; CI-enforced by `guard-carveout-imports.js`); **unit tests of the
+> acceptance criteria below are the deliverable**; **no hard-coded tuning** (invariant #9) — the policy
+> object is passed in, never read from config inside the module. The **caller** (the not-yet-built
+> validation entry point) loads the bin policy and projection from cache and hands them in; **do not
+> write that caller here.**
+
 **Narrative**
 As a warehouse operator, I want bin rules enforced according to what kind of bin it is, so that pick
 faces stay single-SKU while staging areas can hold a mixed tote — which is the whole point of a
@@ -470,6 +489,16 @@ unit-testable core.
 
 ### T-2.6 — `wms_lib_event_registry.js` — declarative event handlers
 **Depends on:** T-2.5 · **Resolves:** F-12, F-13, F-15, F-16, F-17 · **Implements:** AD-15
+
+> **Carved out of the T-0.3 gate — buildable now (D-23, 2026-08-10).** The registry data structure and
+> the pure key serialisation/parsing are the carve-out. Conditions: imports **no `N/` module** (not even
+> `N/error`; CI-enforced by `guard-carveout-imports.js`); **unit tests of the acceptance criteria below
+> are the deliverable** — especially the F-12 group-key round-trip through underscored enum values;
+> **no hard-coded tuning** (invariant #9) — `governanceEst` values and thresholds are declared per
+> handler as data, and live thresholds reach handlers via injected context from T-2.5, never as
+> literals. **The RESTlet/mapper/reducer dispatchers that consume the registry stay held — do not write
+> them.** Each handler's `commit` may be declared as a stub/signature; its NetSuite body is not carved
+> out.
 
 **Narrative**
 As a developer, I want each event type to declare its own validation, grouping and commit behaviour

@@ -72,6 +72,22 @@ through a dead spot instead of standing still waiting for a bar of signal.
 **Requirement**
 Per D-04, connection loss is the **expected** state, not the exception.
 
+*PWA persistence primitives (D-13).* The handheld is a **responsive PWA served from NetSuite**
+(D-13, Q-01 closed), so the durable storage below is browser storage, named concretely:
+- **`IndexedDB` holds both the local master-data cache and the durable outbound queue** — it survives
+  app kill and battery pull, which `localStorage`/in-memory state do not.
+- **`navigator.storage.persist()` is requested** to protect that store against eviction under storage
+  pressure.
+- **A service worker caches the static app shell only** (JS/CSS/assets, for the warm-load and offline
+  reload path) — it does **not** cache master data. The per-location master-data warm goes through the
+  **throttled** GET/POST path (F-29), never the service-worker cache; do not conflate the two.
+- **Residual risk, accepted in writing (D-13):** there is **no background sync while the app is not
+  foregrounded**, and the store can still be **evicted if `persist()` is denied**. Accepted because an
+  operator who is actively picking has the app open, so the queue drains as they work; mitigated by the
+  persistent on-screen unsynced count and the hard-block on queue depth/age below. *(If a per-device
+  credential (D-21/T-3.6) is stored in this same evictable store, its provisioning flow must tolerate
+  eviction — see T-3.6.)*
+
 *Local cache — scoped to the selected location (D-14):* on sync, the device pulls the resolved data
 needed to validate every scan the operator could plausibly make this shift **in the selected
 location** — assigned tasks, and the item, and the **bin, bin-policy, zone, pick-sequence and open-work
@@ -115,7 +131,9 @@ staleness limits, with a supervisor-visible reason.
 **Acceptance**
 - [ ] GIVEN the device is in airplane mode for a full 45-minute pick run, THEN the operator completes every task with no functional difference from online operation.
 - [ ] GIVEN 200 events queued offline, WHEN connectivity returns, THEN they sync via batched requests in under 10 round-trips with no duplicates and no loss.
-- [ ] GIVEN the app is force-killed with a non-empty queue, WHEN it restarts, THEN the queue is intact and drains.
+- [ ] GIVEN the app is force-killed with a non-empty queue, WHEN it restarts, THEN the queue is intact and drains (IndexedDB-backed, D-13).
+- [ ] GIVEN `navigator.storage.persist()` is **denied**, THEN the app still functions, warns that storage is best-effort, and the unsynced-count / hard-block controls remain the safety net — the accepted D-13 residual is handled, not ignored.
+- [ ] GIVEN the network is fully offline, WHEN the app is reloaded, THEN the **service-worker-cached shell** brings it back up, and it operates against the **IndexedDB** cache — while the master-data warm (which needs connectivity) is not served from the service worker. *(D-13; shell ≠ data)*
 - [ ] GIVEN the server returns 429 for 30 s, WHEN the client drains, THEN it backs off with jitter and all events post exactly once.
 - [ ] GIVEN a device draining a queue, THEN it has **at most one request in flight** and sends events **batched** (≤ the config max), never one request per event. *(F-29)*
 - [ ] GIVEN the whole floor reconnecting or warming caches at shift start, THEN client-side jitter spreads the requests so no synchronised spike hits the pool. *(F-29)*
@@ -223,6 +241,12 @@ success renders in < 150 ms. Barcode symbologies and scan-to-field mapping defin
 Explicit sad paths: wrong bin scanned, wrong SKU, wrong lot, insufficient quantity, unknown barcode.
 Large-touch-target, glove-friendly layout.
 
+**Storage model (D-13, detail in T-3.2).** The cached task list, master-data cache and durable outbound
+queue live in **IndexedDB** (protected by `navigator.storage.persist()`); a **service worker caches the
+static shell only** — it powers the warm-load and offline-reload path but never holds master data. The
+accepted D-13 residual (no background sync when un-foregrounded; possible eviction if `persist()` is
+denied) is carried in T-3.2, not re-litigated here.
+
 **The served bundle carries NO secrets (D-19).** The GET response is **public** (Available-Without-Login).
 It must contain **no account identifiers, no role hints, no internal URLs, and no configuration beyond
 what a public page may carry.** The HMAC secret, PIN hashes and device credentials never reach the
@@ -237,7 +261,8 @@ target device, not a developer laptop:
 - **Login → cache warmed → first task actionable ≤ 10 s** — this is the **per-location** warm (D-14),
   and a **location switch re-incurs it** (full purge + re-warm, not a delta). Budget applies to the
   largest in-scope location's data volume.
-- **Warm load (service-worker cached shell) ≤ 1 s.**
+- **Warm load (service-worker cached shell, D-13) ≤ 1 s** — shell only; master data still loads from
+  the IndexedDB cache or a connected warm.
 These are the agreed ceilings; regressions past them fail the build (measured in T-12.5).
 
 **Acceptance**
@@ -263,7 +288,10 @@ before any record load** (T-3.1), on a **cheap rejection path** that consumes mi
 **revocable per device**; with a **per-device rate cap** (distinct from F-29's per-token/per-IP caps).
 **Device identity is separate from operator identity (D-21)** — a transport credential, not the
 badge/PIN. Design choices to make in Phase 3: credential type and storage on rugged Android, rotation,
-revocation propagation, and how the cheap-reject path avoids cache/projection reads.
+revocation propagation, and how the cheap-reject path avoids cache/projection reads. **Storage must
+tolerate the D-13 residual** — if the credential lives in the same evictable browser store as the
+cache/queue (IndexedDB), an eviction or a denied `persist()` must degrade to a clean **re-provisioning**
+path, never a silently dead device.
 
 **Acceptance** *(placeholder — completed when the mechanism is chosen)*
 - [ ] GIVEN the design, THEN a credential type, provisioning, rotation and revocation flow are documented and reviewed.
