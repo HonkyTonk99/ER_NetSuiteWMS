@@ -334,8 +334,11 @@ happy-path demo. Automate (headless browser / device lab) at least:
   prunes exactly the acknowledged events by UUID; a terminal failure dead-letters to the operator.
 - **`DEFERRED` invisibility (D-13/invariant #19)** — a scan whose commit goes `DEFERRED` produces **no**
   operator-facing message; only a `DEFERRAL_TIMEOUT` surfaces, and only to a supervisor.
-- **App update / version compatibility (D-13)** — a new shell activates on a safe reload not mid-task;
-  a too-old client gets `ERR_WMS_CLIENT_UPDATE_REQUIRED` and fails closed rather than posting.
+- **App update / version compatibility (D-13, D-25)** — a new shell activates on a safe reload not
+  mid-task; a too-old client **still drains its queue** but is refused **new work** with
+  `ERR_WMS_CLIENT_UPDATE_REQUIRED` — the queue is never stranded.
+- **Responsive across surfaces (D-24)** — the same task flow is driven on phone, tablet and desktop
+  viewports and completes identically; only layout/density differ.
 - **Reconnect conflict handling** — offline events invalid on arrival route to the exception queue,
   not silently dropped or posted (T-3.5).
 - **Idempotency across retry** — the same UUID replayed after a crash yields one posting (`externalid`
@@ -351,7 +354,8 @@ happy-path demo. Automate (headless browser / device lab) at least:
 - [ ] GIVEN offline events that conflict on reconnect, THEN they raise exceptions rather than posting.
 - [ ] GIVEN a partial-batch response, THEN exactly the acknowledged events are pruned by UUID and the rest stay queued; a terminal failure dead-letters to the operator (D-13).
 - [ ] GIVEN a scan whose commit goes `DEFERRED`, THEN the client shows nothing about it and only `DEFERRAL_TIMEOUT` reaches a supervisor (D-13).
-- [ ] GIVEN a too-old client, WHEN it POSTs, THEN it receives `ERR_WMS_CLIENT_UPDATE_REQUIRED` and forces a shell update rather than posting malformed events (D-13).
+- [ ] GIVEN a too-old client holding queued events, WHEN it reconnects, THEN it drains its queue successfully and is only then refused new work with `ERR_WMS_CLIENT_UPDATE_REQUIRED` — the queue is never stranded (D-25).
+- [ ] GIVEN the same task flow at phone, tablet and desktop viewports, THEN it completes identically on each — same operations, layout/density only differing (D-24).
 - [ ] GIVEN the suite, THEN it runs in CI (headless) and blocks merge on failure.
 
 ---

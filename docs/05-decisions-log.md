@@ -696,6 +696,49 @@ requires a **new ruling** (a new D-number), not an appeal to this one.
 conditions above), CLAUDE.md Working-order note, new CI guard `guard-carveout-imports.js`, `package.json`
 verify chain. Enables planning **Pass 2** (the pure-logic build), which runs as its own pass.
 
+## D-24 — The handheld PWA is responsive across desktop, tablet and phone — same operations · *accepted (sponsor requirement, formalised 2026-08-10)*
+
+**Ruling (sponsor, predates the D-13 passes):** *"Can't we make the handheld html responsive, so when
+used on a desktop, or tablet or phone the operations are the same?"* **Yes.** The same operations must
+work on **desktop, tablet and phone** — not on one device class.
+
+Recorded as a D-number now because it was a sponsor requirement living only in prose, and a
+gap-closure pass (`4df2026`) silently narrowed it to "a single class of rugged Android handheld in
+portrait." **That narrowing is reversed.** The rule:
+
+- **The supported surface is desktop, tablet and phone.** Capability is **identical** across all three
+  — a desktop user and a handheld user perform the **same operations**. The desktop is **not** a
+  read-only or supervisor-only view unless the sponsor explicitly says so.
+- **What changes across breakpoints is layout and density, not capability** — column count, control
+  sizing, table vs card. Real breakpoints are specified in T-3.4.
+- **The rugged-Android portrait handheld remains the *primary target* for the performance budget and
+  field testing** (T-3.4 SPA budget, T-12.5) — a legitimate way to say "this device must feel fast,"
+  **not** a way to narrow the supported surface.
+- **If the responsive requirement is ever judged unaffordable, it is raised as a flagged conflict with a
+  cost — never resolved silently.**
+
+**Affects:** T-3.4 (responsive requirement + breakpoints), the SPA performance budget wording, T-12.5
+(tested across breakpoints), and Q-48 (camera scanning — a consequence of phone support). Interacts with
+D-13 (PWA delivery).
+
+## D-25 — A version-mismatched client may always drain its queue; only new work is gated · *accepted 2026-08-10*
+
+Corrects a rule introduced in `4df2026` (client-version *fail-closed on POST*). A device offline through
+a deployment is holding **real stock movements** in its durable queue; **refusing its POST loses
+inventory truth with no recovery path** — the operator already moved the goods. The rule is split:
+
+- **Drain is always permitted while the event *schema* version is supported.** An out-of-date client may
+  **always flush its outbound queue** — those events are physical facts that already happened. Only an
+  incompatible **event-schema** version (not merely an old app build) can refuse a drain, and that is a
+  migration concern handled by keeping the schema backward-compatible.
+- **New work is gated.** The endpoint refuses to issue **new tasks or cache warms** to an out-of-date
+  client (`ERR_WMS_CLIENT_UPDATE_REQUIRED`), and the operator is told to update. The queue drains first;
+  the block applies to *forward* work only.
+
+**Affects:** T-3.1 (split the version check — drain path vs new-work/warm path), T-3.4 (app update path),
+T-12.5 (acceptance: previous-version client drains, then is refused new work). Relates to invariant #19
+(never lose a scan) and D-13.
+
 ---
 
 ## Superseded

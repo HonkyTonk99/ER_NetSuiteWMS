@@ -15,6 +15,14 @@ session reads; if it is out of date, a withdrawn design gets rebuilt. When a rul
 architecture decision or invariant, propagate it in the same pass and add a row to the log's
 Superseded table.
 
+**Flag any narrowing of scope as a conflict — by default, even when it looks like a detail.** Reducing
+a supported surface, dropping an input path, defaulting a client to fail-closed, scoping something "out
+of v1" — none of these may be decided silently in prose inside a pass doing other work. If a pass
+surfaces a reason to narrow scope, it is raised as a **flagged conflict with a cost** for the sponsor to
+rule on, never resolved in passing. A decision made in passing that nobody ruled on is the project's
+recurring failure mode (it is how the pre-D-07 residue and the D-24/D-25 narrowings happened); treat a
+silent scope reduction as a defect, not an optimisation.
+
 ## Non-negotiable invariants
 
 *Revised 2026-08-08 per sponsor rulings D-01…D-11 in `docs/05-decisions-log.md`. Invariants 1, 2, 7,

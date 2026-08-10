@@ -42,11 +42,15 @@ PUTAWAY), if the source and target bins resolve to **different locations**, reje
 `CROSS_LOCATION_MOVE` exception. Inter-location movement is a NetSuite Transfer Order received through
 the inbound path at the destination — never a WMS bin transfer. The event's location comes from the
 operator's session, from the cache; it is not trusted from the payload alone.
-**Client version compatibility (D-13).** The payload carries a **client version**; an **incompatible
-(too-old) client is rejected with a distinguishable `ERR_WMS_CLIENT_UPDATE_REQUIRED` response** so the
-app can force a shell refresh rather than post malformed events — a stale client **fails closed**. The
-rule is one-directional: the server may add optional fields without breaking older clients; a breaking
-change bumps the required version (T-3.4).
+**Client version compatibility — drain always, new work gated (D-13, D-25).** The payload carries a
+**client version**. **A queue drain (POST of already-scanned events) is always accepted while the event
+*schema* version is supported** — those events are physical stock movements that already happened, and
+refusing them would lose inventory truth with no recovery (invariant #19). **Only *new work* is gated:**
+requests for **new tasks or cache warms** from a too-old client are refused with
+`ERR_WMS_CLIENT_UPDATE_REQUIRED` so the app forces a shell refresh. The rule is one-directional: the
+server may add optional fields without breaking older clients; a breaking change bumps the required
+version (T-3.4). A stale client therefore **flushes its queue, then updates** — it never fails closed on
+the ingest path.
 **Idempotency (AD-04):** a duplicate UUID fails at the platform on `externalid` and returns
 `idempotent:true` — plus the committer dedupe safety net. Structured JSON responses for success,
 idempotent-duplicate, auth failure, validation failure, **client-update-required** and platform error,
@@ -263,14 +267,29 @@ current location at all times.
 success renders in < 150 ms. Explicit sad paths: wrong bin scanned, wrong SKU, wrong lot, insufficient
 quantity, unknown barcode. Large-touch-target, glove-friendly layout.
 
-**Scanner input path and responsive target (D-13).** The **primary scan input is the device's hardware
-imager acting as a keyboard-wedge** (HID keystrokes terminated by a configurable suffix) — the app reads
-it through a focused hidden input with a per-screen scan-to-field mapping, **not** a camera. A **camera
-`getUserMedia` fallback is out of scope for v1** unless a target device lacks a hardware imager (flag as
-a Phase-3 device-survey finding, not a default). Barcode symbologies are enumerated per screen. The
-**responsive target is a single class of rugged Android handheld in portrait** — "responsive" here means
-fluid to that device's range and orientation lock, **not** a phone/tablet/desktop breakpoint matrix;
-any second form factor is a new scope item, not an implied one.
+**Responsive across desktop, tablet and phone — same operations (D-24).** The supported surface is
+**desktop, tablet and phone**, and **capability is identical** on all three — a desktop user and a
+handheld user perform the **same operations** (the desktop is **not** a read-only or supervisor-only
+view unless the sponsor rules otherwise). What changes across breakpoints is **layout and density, not
+capability**:
+- **Phone (portrait, ≈ ≤ 640 px):** single column, one primary action per view, largest touch targets,
+  card layout — the glove-friendly handheld experience.
+- **Tablet (≈ 641–1024 px):** two-pane (task list beside the active task), medium density, touch-first.
+- **Desktop (≈ ≥ 1025 px):** multi-column with denser tables and keyboard-first entry (scan fields still
+  accept a wedge); the same task flows, more visible at once.
+
+The **rugged-Android portrait handheld is the *primary target* for the performance budget and field
+testing** (see the SPA budget below and T-12.5) — that names the device that must feel fast; it does
+**not** narrow the supported surface. *(If this responsive requirement is ever judged unaffordable, it is
+raised as a flagged conflict with a cost — never resolved silently. D-24.)*
+
+**Scanner input path.** The **primary scan input on every surface is a hardware imager acting as a
+keyboard-wedge** (HID keystrokes terminated by a configurable suffix), read through a focused hidden
+input with a per-screen scan-to-field mapping; barcode symbologies are enumerated per screen. **Whether
+a camera-based scan path is *also* required is an open sponsor question (Q-48)** — it is a live
+dependency of phone support (a phone operator may have no wedge hardware, in which case camera is the
+only input path), **not** something scoped out here. Keyboard-wedge remains the primary path regardless
+of how Q-48 resolves.
 
 **Storage model (D-13, detail in T-3.2).** The cached task list, master-data cache and durable outbound
 queue live in **IndexedDB** (protected by `navigator.storage.persist()`); a **service worker caches the
@@ -288,16 +307,22 @@ wrong. Only two things reach the operator about a synced event: a **local dead-l
 surfacing it would train operators to re-scan correct work. It stays in the committer and, if it exceeds
 its retry budget, becomes a **supervisor** exception (`DEFERRAL_TIMEOUT`, T-4.7), never an operator one.
 
-**App update path and client/Suitelet version compatibility (D-13).** A service-worker-cached shell can
-strand an operator on a stale client. Requirement: (a) the service worker uses a **cache-versioned,
-update-on-reload** strategy — a new shell is fetched in the background and activated on the next
-safe reload, never mid-task; (b) every POST carries a **client version**, and the ingest Suitelet
-(T-3.1) **rejects an incompatible client with a distinguishable "update required" response** that the
-app turns into a forced refresh — a stale client must **fail closed, not post malformed events**; (c) the
-compatibility rule is **explicit and one-directional** — the server may add optional fields without
-breaking older clients, but a breaking change bumps the required version. An **offline** device on an
-old version keeps working against its cache and is updated on its next connected reload — the update path
-never blocks offline picking.
+**App update path and client/Suitelet version compatibility (D-13, D-25).** A service-worker-cached
+shell can strand an operator on a stale client. Requirement:
+- (a) the service worker uses a **cache-versioned, update-on-reload** strategy — a new shell is fetched
+  in the background and activated on the next **safe reload, never mid-task**;
+- (b) **the version check is split so a stale client can never strand a queue (D-25).** Every request
+  carries a **client version**. **Draining the outbound queue is always permitted while the event
+  *schema* is supported** — those events are stock that already physically moved; refusing them loses
+  inventory truth with no recovery. The endpoint gates **new work only**: it refuses to issue **new
+  tasks or cache warms** to an out-of-date client with `ERR_WMS_CLIENT_UPDATE_REQUIRED`, and the app
+  tells the operator to update. Drain first, block forward work;
+- (c) the compatibility rule is **one-directional** — the server may add optional fields without
+  breaking older clients; a breaking change bumps the required version.
+
+An **offline** device on an old version keeps working against its cache, **flushes its queue on
+reconnect**, and is updated on its next safe reload — the update path never blocks offline picking or
+queue drain.
 
 **The served bundle carries NO secrets (D-19).** The GET response is **public** (Available-Without-Login).
 It must contain **no account identifiers, no role hints, no internal URLs, and no configuration beyond
@@ -305,9 +330,10 @@ what a public page may carry.** The HMAC secret, PIN hashes and device credentia
 browser; the app obtains only a session token *after* login. Verified by inspecting the shipped bundle.
 
 **SPA performance budget (stated ceilings, agreed with the sponsor).** The PWA is served from NetSuite
-and first-loaded over warehouse Wi-Fi on the **target rugged Android device** — the login-and-warm-up
-experience is governed by this budget and nothing else in the plan constrains it. Measure on the
-target device, not a developer laptop:
+and first-loaded over warehouse Wi-Fi on the **rugged Android device — the primary target for this
+budget and field testing (D-24), not the limit of the supported surface** (desktop/tablet/phone are all
+supported). The login-and-warm-up experience is governed by this budget. Measure on the target device,
+not a developer laptop:
 - **JS/CSS bundle ≤ 500 KB gzipped** (app shell); assets lazy-loaded beyond that.
 - **Cold first load (empty cache) to interactive ≤ 3 s** over representative warehouse Wi-Fi.
 - **Login → cache warmed → first task actionable ≤ 10 s** — this is the **per-location** warm (D-14),
@@ -325,9 +351,10 @@ These are the agreed ceilings; regressions past them fail the build (measured in
 - [ ] GIVEN 30 minutes of continuous use, THEN no memory growth or degradation is observed on the target device.
 - [ ] GIVEN the shipped public GET bundle is inspected, THEN it contains no account identifiers, role hints, internal URLs, secrets or configuration beyond what a public page may carry. *(D-19)*
 - [ ] GIVEN a scan event whose commit later goes `DEFERRED` (F-25), THEN the operator's app shows **nothing** about it — no error, no re-scan prompt; it is retried server-side and escalates only to a **supervisor** on `DEFERRAL_TIMEOUT`. *(D-13/invariant #19)*
-- [ ] GIVEN a hardware-imager scan (keyboard-wedge) on each screen, THEN it maps to the correct field via the per-screen mapping; camera scanning is not required for v1. *(scanner input path)*
+- [ ] GIVEN the same task flow run on a **phone, a tablet and a desktop**, THEN the **operations are identical** — every action available on one is available on the others; only layout and density differ across the breakpoints. *(D-24)*
+- [ ] GIVEN a hardware-imager scan (keyboard-wedge) on each screen and surface, THEN it maps to the correct field via the per-screen mapping; **whether a camera scan path is also required is tracked as Q-48**, not assumed absent. *(scanner input path)*
 - [ ] GIVEN a new app version is deployed, WHEN a foregrounded device reloads, THEN it activates the new shell on a safe reload (never mid-task); an offline device keeps working and updates on its next connected reload. *(app update path)*
-- [ ] GIVEN a client too old for the current API, WHEN it POSTs, THEN it receives `ERR_WMS_CLIENT_UPDATE_REQUIRED` and forces a refresh — it never posts malformed events (fails closed). *(version compatibility, T-3.1)*
+- [ ] GIVEN a client on the **previous version holding queued events**, WHEN it reconnects, THEN it **drains its queue successfully** and is **then refused new work** with an operator-readable "update required" message — the queue is never stranded. *(D-25, T-3.1)*
 
 ---
 
