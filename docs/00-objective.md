@@ -59,9 +59,9 @@ and a real-time performance dashboard.
 ## 3. Architecture as I understand it
 
 ```
-50 handhelds ──HTTP POST──> [L1] Ingestion RESTlet
+50 PWA clients ─HTTP POST─> [L1] Ingestion Suitelet (same origin; D-19)
                                   · validate against cache (advisory)
-                                  · write customrecord_wms_scan_event (PENDING)
+                                  · write customrecord_wms_scan_event (PENDING, externalid = UUID)
                                   · return 200 immediately
                                         │
                                         ▼

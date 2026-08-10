@@ -33,7 +33,7 @@ That is the common case, it involves one operator at a time, and it produces fal
 will destroy floor confidence in the system within a shift.
 
 **Resolution (AD-03 rewritten):** maintain a **bin state projection** — a single small record per
-bin holding `(itemId, lotNumber, qty, version)`, updated by the ingestion RESTlet on accept and
+bin holding `(itemId, lotNumber, qty, version)`, updated by the ingestion Suitelet on accept and
 reconciled by the commit stage. Because of TK's own 1-SKU/1-batch rule this record is tiny and
 cheap. It is the authoritative operational view of a bin; `inventorybalance` remains the financial
 truth and the two are reconciled nightly. Validation reads the projection, not the ledger and not a
@@ -377,34 +377,47 @@ layers stay.
 
 ---
 
-## D-12 — No value-uniqueness constraint in NetSuite; locks withdrawn, idempotency moves to the committer · *accepted 2026-08-09*
+## D-12 — Idempotency via `externalid`; locks rejected on simplicity (not impossible) · *accepted 2026-08-09; corrected 2026-08-09 per developer*
 
-**Platform finding (TK):** *a custom text field can hold the same value on many records — NetSuite has
-no value-uniqueness constraint. A "unique" checkbox is application-layer validation, not a database
-constraint, and a control script that searches-then-creates is read-then-write and therefore racy
-under two simultaneous saves.*
+> **Corrected.** The first version of this decision said NetSuite has *no* value-uniqueness primitive
+> and therefore locks were *impossible*. That was wrong — it looked only at custom fields. The standard
+> **`externalid`** field is platform-enforced unique. The correction matters: an "impossible" note
+> would lead a future reader who discovers `externalid` to assume this was an error and reinstate the
+> lock. It was **rejected on simplicity, not ruled out on capability.**
 
-This **disproves the assumption AD-04 and AD-05 were built on** (T-0.6 spike, now answered by ruling
-rather than experiment). Both are re-designed:
+**Platform finding (two parts):**
+- **(TK)** Custom text fields have **no value-uniqueness constraint** — a "unique" checkbox is
+  application-layer validation, and a search-then-create control script is read-then-write and racy.
+- **(developer)** The record's **standard `externalid`** field **is** platform-enforced unique, and is
+  purpose-built for integration/idempotency keys. This is the primitive the first note said did not
+  exist.
 
-- **AD-04 (idempotency) → committer-side dedupe.** Ingestion inserts the scan event with no pre-read
-  and no reliance on a unique field (a retry may create a duplicate row). The **committer** groups by
-  `custrecord_se_event_id` (UUID), keeps the first, and marks the rest **`SUPERSEDED`**. The guarantee
-  changes from "no duplicate rows" to **"no duplicate ledger postings"** — which is the property that
-  actually matters.
-- **AD-05 (locking) → WITHDRAWN.** The **order lock** was redundant given AD-06's group-by-order plus
-  flipping events to `PROCESSING` on claim (one reduce invocation owns an order already). The **bin
-  lock** is replaced by **single-threaded bin-state settlement** — all bin-affecting commit work runs
-  through **one Map/Reduce queue**, so there is no machine-machine race to lock against.
-  `customrecord_wms_concurrency_lock` is **deleted**, along with the stale-lock reaper and the
-  `STALE_LOCK` / `LOCK_TIMEOUT` exception types.
+**AD-04 (idempotency) — two layers:**
+1. **`externalid` = client UUID as the PRIMARY guard.** Ingestion sets `externalid` to the scan's UUID
+   and attempts the create; a duplicate fails at the platform and is caught → return success/idempotent.
+2. **Committer-side dedupe as a SAFETY NET.** The committer still groups by UUID, keeps the first and
+   marks the rest `SUPERSEDED`, so even a duplicate that somehow lands never becomes a duplicate ledger
+   posting. Both layers are kept deliberately (the developer independently recommended keeping the
+   downstream posting idempotent, and TK agrees).
 
-**Cost:** the bin-affecting commit phase loses parallelism (single queue). Accepted — it removes an
-entire failure class (deadlocks, orphaned locks, the reaper) and a platform primitive that does not
-exist. Other commit work (fulfillment by order) still parallelises.
+**AD-05 (locking) — WITHDRAWN, by choice:**
+- A lock **is technically possible** via `externalid` (acquire = create a lock record whose `externalid`
+  is the resource id; loser catches the duplicate). It is **rejected on simplicity grounds**, not
+  because it cannot be built.
+- **Single-threaded bin-state settlement** — all bin-affecting commit work through **one Map/Reduce
+  queue** — is correct **by construction**: no TTL, no reaper, no deadlock ordering, no stale-lock
+  handling. Under D-07 bin movements post **nothing** to NetSuite, so the serialised path is cheap.
+- The **order lock stays deleted regardless** — it was always redundant given AD-06 group-by-order plus
+  flipping events to `PROCESSING` on claim; that reasoning never depended on the uniqueness question.
+- `customrecord_wms_concurrency_lock`, the stale-lock reaper and the `STALE_LOCK`/`LOCK_TIMEOUT`
+  exception types are deleted (they belong to the rejected design).
 
-**Supersedes:** AD-04, AD-05, F-02 (the lock was removed because the primitive it required does not
-exist — not merely reduced in scope), CLAUDE.md invariants #3 and #7, and the lock record §3.2.
+**One `externalid` per record type = one platform-enforced unique key.** A record can have only one
+`externalid`, so it enforces exactly one uniqueness rule; any *second* uniqueness rule on the same
+record falls back to script validation. The three records that need it: scan event (`externalid` =
+client UUID), bin state (= bin identifier), bin master (= location-prefixed bin code).
+
+**Supersedes:** AD-04, AD-05, F-02, CLAUDE.md invariants #3 and #7, and the lock record §3.2.
 
 ## D-13 — Handheld is a responsive PWA · *accepted*
 
@@ -471,6 +484,45 @@ required Bin Management enabled and contradicted D-07 — so this **confirms D-0
 provisional.** T-0.1 keeps a general namespace-collision check on ACP-hygiene merits. **Supersedes**
 the provisional "D-07 contingent on Q-13" caveat.
 
+## D-19 — Browser transport & auth: same-origin Suitelets, no per-operator login (Option C) · *recommended, pending developer confirmation, 2026-08-09*
+
+Two corrections from the NetSuite developer that the earlier design got wrong, and the sponsor's auth
+ruling. **Recommended-pending-confirmation** (three questions to the developer at the end).
+
+**Transport — Suitelet is the API, not a RESTlet.** A Suitelet and a RESTlet are served from
+*different hosts*, so a PWA calling a RESTlet is cross-origin (CORS). The PWA is served by a Suitelet
+(D-13), so its API is a **sibling Suitelet — same origin, no CORS.** RESTlets leave the browser path
+entirely (they remain available for server-to-server integrations). `wms_rl_scan_ingest.js` →
+`wms_sl_scan_ingest.js`. Governance and concurrent-slot cost are identical to a RESTlet — T-0.2's
+numbers are unchanged, only the wording. **Closes T-0.7.**
+
+**Auth — Option C, no NetSuite user per operator** *(sponsor rejected "every operator needs a NetSuite
+login")*:
+- The SPA is served from an **Available Without Login** Suitelet — **no NetSuite user for any
+  operator** (resolves **Q-30**: no per-operator licence).
+- The API is a **sibling Suitelet, same origin.**
+- **No TBA in the browser** (credentials stay server-side); none is needed.
+- **Operator identity is carried in the payload** onto `custrecord_se_operator`.
+- Hardening (T-3.3, rewritten): operator ID + **PIN/badge** against a WMS operator record with a
+  **hashed PIN**; a **signed session token HMAC'd** with a script-parameter secret, with expiry; every
+  call validates signature, expiry and operator-active; IP allowlisting where feasible; rate limiting
+  per token and per IP; execute-as-role scoped to **create scan events and read reference data only**.
+
+**New finding F-27** — an **internet-exposed, unauthenticated write endpoint** now fronts inventory
+event creation. Not contemplated by the FRD; **accepted deliberately** (it removes the per-operator
+licence requirement), mitigated by the six controls above, and **must be in the pre-go-live security
+review.**
+
+**Q-02 (device auth) is subsumed** into T-3.3 and closed as a separate question.
+
+**Confirm with the developer before treating Option C as settled:** (a) can an Available Without Login
+Suitelet serve an HTML/JS page **and** act as its JSON API? (b) same concurrency budget as
+authenticated Suitelets? (c) any governance or session differences? Until answered, this is
+**recommended, not final.**
+
+**Supersedes/affects:** AD-01, AD-09/D-13 (delivery detail), T-3.1 (Suitelet), T-3.3 (rewritten), Q-02
+(closed), Q-30 (resolved). D-13's PWA propagation is held until (a)–(c) are confirmed.
+
 ---
 
 ## Superseded
@@ -491,12 +543,12 @@ the provisional "D-07 contingent on Q-13" caveat.
 | Q-18, Q-19, Q-20 (tier/licensing questions) | **Closed by D-07** |
 | AD-16 (capability tier abstraction) | **Rewritten** as the NetSuite boundary |
 | `06-capability-tiers.md` | **Replaced** by `06-netsuite-boundary.md` |
-| F-02 (lock protocol) | **Withdrawn by D-12** — the lock was removed because the value-uniqueness primitive it required does not exist in NetSuite (earlier "reduced to commit stage" is itself superseded) |
+| F-02 (lock protocol) | **Withdrawn by D-12** — a lock is *possible* via `externalid` but **rejected on simplicity** for single-threaded bin-state settlement (not impossible; earlier "reduced to commit stage" also superseded) |
 | F-05 (replenishment deadlock) | **Resolved by D-03** — no longer a live risk |
 | Q-03, Q-04, Q-14 | **Closed by D-03** |
 | AD-03 | **Rewritten** in `02-architecture.md` (optimistic version check, not atomic CAS) |
-| **AD-04 (unique-field idempotency)** | **Superseded by D-12** — committer-side dedupe (group by UUID, keep first, rest `SUPERSEDED`) |
-| **AD-05 (concurrency lock protocol)** | **WITHDRAWN by D-12** — order lock redundant; bin lock replaced by single-threaded bin-state settlement; `customrecord_wms_concurrency_lock`, the stale-lock reaper and `STALE_LOCK`/`LOCK_TIMEOUT` deleted |
+| **AD-04 (unique-field idempotency)** | **Rewritten by D-12** — `externalid` = UUID as primary guard **plus** committer-side dedupe (keep first, rest `SUPERSEDED`) as safety net |
+| **AD-05 (concurrency lock protocol)** | **WITHDRAWN by D-12** — lock is possible via `externalid` but rejected on simplicity; order lock redundant anyway; single-threaded bin-state settlement; lock record, reaper and `STALE_LOCK`/`LOCK_TIMEOUT` deleted |
 | **AD-09 ("PWA cannot deliver persistence")** | **Corrected by D-13** — PWA delivers persistence via IndexedDB + `persist()`; residual risk accepted in writing |
 | **AD-14 (five bin types)** | **Extended by D-16** — seven types + `availableForFulfilment` |
 | **Q-08 (single vs multi location)** | **Closed by D-14** — multi-location in scope; location mandatory session context |

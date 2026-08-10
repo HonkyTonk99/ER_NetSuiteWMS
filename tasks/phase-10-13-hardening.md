@@ -237,7 +237,7 @@ Targets, revised from Doc A §6 per F-07 and agreed with the sponsor before test
 | Metric | FRD target | Agreed target | Why changed |
 |---|---|---|---|
 | Handheld UI acknowledgement | < 300 ms | **< 150 ms (client-side, optimistic)** | Achievable on-device; the operator experience the FRD wants |
-| Server ingestion | < 150 ms / < 200 ms P99 | **P95 < 600 ms, P99 < 1200 ms** | NetSuite RESTlet round-trip floor |
+| Server ingestion | < 150 ms / < 200 ms P99 | **P95 < 600 ms, P99 < 1200 ms** | NetSuite Suitelet round-trip floor (same as RESTlet) |
 | Event → ledger latency | *(unstated)* | **P95 < 5 min** | Was never specified; must be |
 | Scan processing failure rate | < 0.01% | **< 0.01%** | Retained |
 | DB lock exceptions | Zero | **Zero** | Retained |
@@ -265,7 +265,7 @@ killed mid-reduce; cache poisoned with stale bin data; a bin's contents changed 
 commit. **No lock-holder-killed test** — there are no locks (D-12).
 
 **Acceptance**
-- [ ] GIVEN the same UUID posted from two threads at once, THEN duplicate rows may exist but **exactly one is ever posted** (the rest `SUPERSEDED`) — the dedupe guarantee, not a unique-row guarantee.
+- [ ] GIVEN the same UUID posted from two threads at once, THEN the platform's `externalid` uniqueness admits **exactly one row** (the loser gets a duplicate error); and even if a duplicate ever landed, the committer supersedes all but one so **exactly one posting** results.
 - [ ] GIVEN opposing bin-to-bin transfers, THEN the single settlement queue serialises them with no interleaving and no deadlock.
 - [ ] GIVEN the M/R is killed mid-reduce, WHEN it restarts, THEN no event posts twice and none is stranded in PROCESSING (the health monitor, T-11.2, resets stragglers).
 - [ ] GIVEN deliberately stale cache data, THEN the commit-time authoritative check catches the conflict and no invalid inventory posts.

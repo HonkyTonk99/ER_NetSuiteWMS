@@ -18,7 +18,7 @@ Every finding below has a corresponding task in `tasks/`. The `→` column gives
 > stronger, single-operator form, set out below.
 
 Doc A §2.2 caches `WMS_BIN_MAP` containing `currentSku`, `currentBatch` and `qty`, and
-`wms_rl_scan_ingest.js` uses that value to decide whether a putaway violates the single-SKU rule.
+`wms_sl_scan_ingest.js` (the ingestion Suitelet) uses that value to decide whether a putaway violates the single-SKU rule.
 
 The problem is not cache coherence. It is that **every available source of bin contents is wrong
 during normal operation**, because this architecture deliberately defers ledger posting:
@@ -44,7 +44,7 @@ single shift. Tightening the cache TTL makes it worse, not better — a fresher 
 
 **Correction adopted (AD-03, rewritten):** introduce a **bin state projection** —
 `customrecord_wms_bin_state`, one row per bin holding `(itemId, lotNumber, qty, version)`. The
-ingestion RESTlet updates it on accept; the commit stage reconciles it. It reflects *physical*
+ingestion Suitelet updates it on accept; the commit stage reconciles it. It reflects *physical*
 reality including not-yet-posted events, which is precisely what the operator needs and what neither
 the cache nor the ledger can offer.
 
@@ -55,25 +55,25 @@ no `inventorybalance` query on the operator's path.
 `inventorybalance` remains the **financial** truth. The projection is the **operational** truth. They
 are reconciled nightly (T-8.3), and divergence between them is itself a monitored signal.
 
-### F-02 · ~~S2~~ **WITHDRAWN (D-12)** · The lock could never have worked — its primitive doesn't exist → *(no task; locks removed)*
+### F-02 · ~~S2~~ **WITHDRAWN (D-12)** · The lock is possible but rejected on simplicity → *(no task; locks removed)*
 
 > **Withdrawn 2026-08-09 per D-12.** The original finding was that `customrecord_wms_concurrency_lock`
-> was defined but never acquired, and proposed the only race-free NetSuite pattern: mark
-> `custrecord_lock_resource_id` **unique**, attempt the create, loser catches the unique violation.
-> **That pattern does not exist** — NetSuite has no value-uniqueness constraint (D-12). So the lock
-> could never have been made race-free at all. Rather than build on a non-existent primitive, locks
-> are removed and the races removed structurally: order commits serialised by AD-06 grouping +
-> `PROCESSING` claiming; bin-affecting commit work single-threaded through one M/R queue.
+> was defined but never acquired, and proposed the race-free pattern: mark the lock's key **unique**,
+> attempt the create, loser catches the duplicate. That pattern **is** buildable — the record's standard
+> **`externalid`** field is platform-unique (custom fields are not — that was the confusion). So a lock
+> is possible; it is **rejected on simplicity**, not ruled out. The races it would guard are removed
+> more cheaply: order commits serialised by AD-06 grouping + `PROCESSING` claiming; bin-affecting commit
+> work single-threaded through one M/R queue (correct by construction, no TTL/reaper/deadlock handling).
 > `customrecord_wms_concurrency_lock`, the reaper (was T-11.2) and `STALE_LOCK`/`LOCK_TIMEOUT` are
-> deleted. See AD-04 (idempotency, now committer-side dedupe) and AD-05 (withdrawn).
+> deleted. See AD-04 (two-layer idempotency) and AD-05 (withdrawn by choice).
 
-*Original analysis retained below for traceability — the defect it described is real; the fix it
-proposed is the one that turned out to be impossible.*
+*Original analysis retained below for traceability — the defect it described (a lock record with no
+logic) is real; the fix it proposed was sound and could be built on `externalid`, but a lock is not the
+simplest way to remove these races.*
 
 `customrecord_wms_concurrency_lock` had fields (`resource_type`, `resource_id`, `acquired_by`,
-`acquired_time`) and no logic anywhere. The proposed race-free pattern — mark `custrecord_lock_resource_id`
-unique and attempt the create — assumed a uniqueness primitive NetSuite does not provide, which is
-exactly what D-12 established.
+`acquired_time`) and no logic anywhere. The proposed race-free pattern — a unique key, attempt the
+create — is realisable via `externalid`; D-12 chose single-threaded settlement instead.
 
 ### F-03 · S1 · No re-assertion of invariants between validation and posting → `T-4.4`, `T-8.1`
 
@@ -152,7 +152,8 @@ requested in D-05.
 
 ### F-07 · S2 · The <150 ms / <300 ms SLA is not attainable as a server round-trip → `T-3.1`, `T-12.2`
 
-A NetSuite RESTlet doing authentication, one custom-record save and returning JSON is realistically
+A NetSuite Suitelet (or RESTlet — same round-trip floor) doing authentication, one custom-record save
+and returning JSON is realistically
 **250–800 ms** at P95 from a warehouse Wi-Fi handheld, before any of the work Doc A also puts in that
 call. The sample code additionally runs a saved search (F-08) inside the same request.
 
@@ -170,18 +171,18 @@ server ingestion P95 < 600 ms, P99 < 1200 ms; event → ledger posting P95 < 5 m
 database read on the hot path, contradicting Doc A's own "2–4 governance units per scan" claim in
 the §5 matrix.
 
-**Correction *(superseded by D-12)*:** the original fix made `custrecord_se_event_id` a **unique**
-field and caught `UNIQUE_FIELD_VALUE_ALREADY_EXISTS` on insert. **That primitive does not exist** —
-NetSuite has no value-uniqueness constraint (D-12). The defect the finding raised is still real (a
-per-scan saved search is banned on the hot path), but the fix is now **committer-side dedupe** (AD-04):
-ingestion inserts with no check, and the committer groups by UUID, keeps the first and marks the rest
-`SUPERSEDED`. Zero reads on the hot path, and correct under concurrency — the guarantee is "no
-duplicate *ledger postings*", not "no duplicate rows".
+**Correction *(refined by D-12)*:** the original fix made a *custom* field unique and caught the
+violation on insert. Custom fields are **not** platform-unique — but the record's standard **`externalid`**
+**is** (D-12). So the fix stands, on the right field: ingestion sets `externalid` = UUID and attempts the
+create; a duplicate fails at the platform (`DUP_RECORD`) and is caught → `idempotent:true`. Zero hot-path
+reads, correct under concurrency. A **committer-side dedupe** (group by UUID, keep first, rest
+`SUPERSEDED`) is kept as a **safety net** (AD-04 layer 2), so even a duplicate that slips past never
+becomes a duplicate *ledger posting*.
 
 ### F-09 · S2 · Concurrency, not governance, is the binding constraint → `T-0.2`, `T-3.2`, `T-12.1`
 
-Doc A's §5 matrix frames the problem as governance units. It isn't. RESTlet governance is 1,000 units
-per *invocation* and a scan costs ~4–14; you will never approach it. The real ceiling is
+Doc A's §5 matrix frames the problem as governance units. It isn't. Suitelet (and RESTlet) governance
+is 1,000 units per *invocation* and a scan costs ~4–14; you will never approach it. The real ceiling is
 **concurrent request slots**, which SuiteCloud Plus grants in increments and which are shared across
 handhelds, Map/Reduce queues, scheduled scripts, the dashboard, and every other integration in the
 account.
@@ -285,7 +286,7 @@ Each of these is either a task in the plan or an open question. None of them can
 | Gap | Impact | Where handled |
 |---|---|---|
 | **The handheld application itself** | Largest single work item; Doc A assumes it exists | Phase 3, Q-01 |
-| **RESTlet authentication** (TBA vs OAuth 2.0), token provisioning across 50 devices | Blocks any device connecting | `T-3.3`, Q-02 |
+| **Operator authentication** ~~(TBA vs OAuth 2.0)~~ | *Resolved by D-19 — Option C: Available-Without-Login Suitelet, hashed-PIN operator login, HMAC session token; no per-operator NetSuite user. See F-27* | `T-3.3` (Q-02 subsumed) |
 | **Short pick / stock-out handling** | The #1 real floor exception. Completely absent | `T-7.4` |
 | **Receiving & putaway** | §2.1 says "before committing any receipt, putaway…" — flow never defined | Q-05 |
 | **Cycle counting** | `COUNT` is in the event type enum with no specification | Q-05 |
@@ -488,6 +489,22 @@ figure has to be true.
 Option (a) has a build consequence to note when ruled on: a second location means the WMS↔NetSuite
 boundary carries genuine location-to-location Inventory Transfers (T-2.7, T-4.3), which also touches
 Q-08 (multi-location scope).
+
+### F-27 · S2 · Internet-exposed unauthenticated write endpoint → `T-3.3` *(accepted, mitigated)*
+
+*Raised 2026-08-09, arising from D-19 (auth Option C).*
+
+Option C serves the SPA and its API from an **Available Without Login** Suitelet so operators need no
+NetSuite user (removing 50 licences — Q-30). The consequence: a **publicly reachable, unauthenticated
+(at the platform level) endpoint now fronts inventory event creation.** The FRD never contemplated
+this — it assumed authenticated device connections.
+
+**Accepted deliberately** — the licence saving is real and the exposure is manageable — but only
+**because it is mitigated in application code** (T-3.3): hashed-PIN operator login, HMAC-signed session
+tokens with expiry, per-token/per-IP rate limiting, IP allowlisting where feasible, an execute-as-role
+that can only create scan events and read reference data, and audit logging. **This finding must be
+carried into the pre-go-live security review** (the endpoint is the largest new attack surface the
+programme introduces) and re-tested whenever the auth code changes.
 
 ---
 

@@ -9,7 +9,8 @@ Merges the schemas from Doc A §3 and Doc B §4, plus additions required by the 
 
 | Field | Type | Notes |
 |---|---|---|
-| `custrecord_se_event_id` | Free-Form Text | Client UUID v4. **Searchable, NOT unique** — NetSuite has no value-uniqueness constraint (D-12). Idempotency is committer-side dedupe by this field: keep first, mark rest `SUPERSEDED` (AD-04) |
+| **`externalid`** *(standard field)* | — | **= client UUID v4. Platform-enforced UNIQUE (D-12) — the primary idempotency guard (AD-04 layer 1).** Ingestion sets it and attempts the create; a duplicate fails at the platform |
+| `custrecord_se_event_id` | Free-Form Text | Mirrors the UUID in `externalid` for convenient search/grouping (custom fields are easy to filter on). **Not itself unique** — the uniqueness lives on `externalid`. The committer groups by UUID as a dedupe safety net (AD-04 layer 2) |
 | `custrecord_se_type` | List/Record | PICK, PACK, REPLEN_MOVE, BIN_TRANSFER, COUNT, **SHORT_PICK, OVERRIDE, PUTAWAY, EXCEPTION, RECEIPT_PO, RECEIPT_TO, RECEIPT_WO** *(inbound added per D-09)* |
 | `custrecord_se_operator` | List/Record → Employee | |
 | `custrecord_se_wave` | List/Record → Wave Pick | |
@@ -34,16 +35,20 @@ Merges the schemas from Doc A §3 and Doc B §4, plus additions required by the 
 | **`custrecord_se_retry_count`** | Integer | |
 | **`custrecord_se_uom`** | List/Record | Only if UOM conversion is in scope (Q-07) |
 
-**Indexes:** `custrecord_se_event_id` **searchable but not unique** (D-12 — no platform uniqueness;
-dedupe is committer-side); composite search index on `(status, type, location)` for the M/R input
-search — this table reaches ~350k rows at a 7-day retention.
+**Idempotency key:** `externalid` = client UUID, **platform-unique** (D-12). `custrecord_se_event_id`
+mirrors it, searchable, not unique. **Indexes:** composite search index on `(status, type, location)`
+for the M/R input search — this table reaches ~350k rows at a 7-day retention.
+
+> **One `externalid` per record = one platform-unique key.** A record type can enforce exactly one
+> uniqueness rule via `externalid`; any *second* uniqueness rule on the same record falls back to
+> script validation (D-12).
 
 ## 3.2 `customrecord_wms_concurrency_lock` — **DELETED (D-12)**
 
-**This record is withdrawn.** The lock protocol required a race-free "acquire = attempt a unique
-create" primitive, and NetSuite has no value-uniqueness constraint to provide it (D-12). Order commits
-are serialised by AD-06 grouping + `PROCESSING` claiming; bin-affecting commit work is single-threaded
-through one Map/Reduce queue (AD-05, withdrawn). No lock record, no reaper, no `STALE_LOCK` /
+**This record is withdrawn (D-12) — rejected on simplicity, not impossible.** A lock *could* be built
+on `externalid` (which is platform-unique), but the races it would guard are removed more cheaply:
+order commits are serialised by AD-06 grouping + `PROCESSING` claiming; bin-affecting commit work is
+single-threaded through one Map/Reduce queue (AD-05). So no lock record, no reaper, no `STALE_LOCK` /
 `LOCK_TIMEOUT` exception types. Section retained as a tombstone so the deletion is traceable.
 
 ## 3.2b `customrecord_wms_bin_state` — **new (AD-03, per D-01)**
@@ -53,7 +58,7 @@ One row per bin. Viable as a single tiny record precisely because of the 1-SKU/1
 
 | Field | Type | Notes |
 |---|---|---|
-| `custrecord_bs_bin` | List/Record → `customrecord_wms_bin` | One state row per bin. Uniqueness is **not** a DB constraint (D-12) — enforced by the module always upserting bin state **by bin internal ID** (read-then-write, single settlement queue), never blind-creating |
+| `custrecord_bs_bin` | List/Record → `customrecord_wms_bin` | One state row per bin. **`externalid` = the bin identifier makes this platform-UNIQUE (D-12)** — a second state row for a bin cannot be created. The module still upserts by bin (read-then-write on the single settlement queue) |
 | `custrecord_bs_item` | List/Record → Item | Current SKU, empty when bin is empty |
 | `custrecord_bs_lot` | Free-Form Text | Current batch, empty when bin is empty |
 | `custrecord_bs_qty` | Decimal | Current physical quantity |
@@ -82,7 +87,7 @@ this section was a leftover from before that ruling. The WMS owns the bin master
 
 | Field | Type | Notes |
 |---|---|---|
-| `name` | Text | Bin code **prefixed with the location code** (D-14), e.g. `WH1-A-01-03`, so codes are unique across locations. Uniqueness is enforced at **migration/data-load** and by the prefix convention, **not** a DB constraint (D-12, no platform uniqueness) |
+| `name` | Text | Bin code **prefixed with the location code** (D-14), e.g. `WH1-A-01-03`. **`externalid` = this location-prefixed code makes it platform-UNIQUE (D-12)** — no duplicate bin codes across locations |
 | `custrecord_wb_location` | List/Record → Location | NetSuite location the bin physically sits in |
 | `custrecord_wb_type` | List/Record | **UNIT, BULK, STAGE, RECEIVING, QUALITY, RETURN, DEFECT** (AD-14 / F-18; Q-16 closed 2026-08-09) |
 | `custrecord_wb_policy` | List/Record → `customrecord_wms_bin_policy` | Carries `singleSku`, `singleBatch`, `allowDirectPick`, `replenTarget` (AD-14) — validation loads policy, never a hardcoded type check (invariant #2) |
@@ -192,9 +197,26 @@ Seeded per the AD-14 table. Changing the bulk-bin rule later is an edit here, no
 ## 3.10 `customrecord_wms_config` — **new**
 
 Single-row settings record. Ends the F-16 threshold ambiguity and removes every magic number from
-code: similarity threshold, max cluster size, cart tote capacity, SKU fan-out cap, lock TTL seconds,
-M/R batch size, event retention days, replenishment scan interval, ingestion advisory-check toggle,
-dashboard refresh seconds.
+code: similarity threshold, max cluster size, cart tote capacity, SKU fan-out cap, M/R batch size,
+event retention days, replenishment scan interval, ingestion advisory-check toggle, dashboard refresh
+seconds, session-token TTL, rate-limit thresholds. *(`lock TTL seconds` removed — locks withdrawn, D-12.)*
+
+## 3.11 `customrecord_wms_operator` — **new (D-19)**
+
+Operator auth for Option C — operators have **no NetSuite user** (Q-30). Login is validated against
+this record; identity flows into `custrecord_se_operator` (→ Employee).
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | Text | Operator display name |
+| `custrecord_op_code` | Free-Form Text | Operator ID / badge value. `externalid` = this code makes it platform-UNIQUE (D-12) |
+| `custrecord_op_employee` | List/Record → Employee | Links to the Employee record used for attribution (no login licence needed) |
+| `custrecord_op_pin_hash` | Free-Form Text | **Hashed** PIN (salted). **Never plaintext** (T-3.3) |
+| `custrecord_op_active` | Checkbox | Deactivating cuts the operator off; every API call checks it |
+| `custrecord_op_role` | List/Record | Picker / Packer / Supervisor — drives on-device capability |
+
+> The PIN hash and the HMAC session-token secret (a script parameter) are the two secrets in the
+> system. Neither is ever returned to the browser. See T-3.3 and F-27.
 
 ---
 

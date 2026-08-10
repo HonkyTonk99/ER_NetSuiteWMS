@@ -14,10 +14,12 @@ phase is scheduled** — they are not "we'll work it out in the sprint" question
 > **Updated 2026-08-08 per D-11** — costing is NetSuite's concern and out of WMS scope; negative
 > inventory is permitted in the WMS and forbidden in NetSuite. **Closes Q-24 and Q-26.**
 >
-> **Updated 2026-08-09 — recorded as decisions D-12…D-18 (see `05-decisions-log.md`).** Every ruling
+> **Updated 2026-08-09 — recorded as decisions D-12…D-19 (see `05-decisions-log.md`).** Every ruling
 > below now has a D-number and the log is current for the first time since D-11.
-> - **D-12** — no value-uniqueness constraint in NetSuite → AD-04 committer-side dedupe, AD-05
->   withdrawn, `customrecord_wms_concurrency_lock` deleted. **Propagated across the spec** (~15 sites).
+> - **D-12** *(corrected)* — custom fields aren't unique but **`externalid` is** → AD-04 uses
+>   `externalid`=UUID as primary guard **plus** committer dedupe as safety net; AD-05 withdrawn **by
+>   choice** (a lock is possible on `externalid` but rejected on simplicity), lock record deleted.
+>   **Propagated across the spec.**
 > - **D-13** — Q-01: handheld = responsive PWA, Android-first, served from NetSuite; iOS out of scope.
 >   AD-09's "PWA cannot deliver persistence" claim corrected; residual risk accepted in writing.
 > - **D-14** — Q-08: multi-location in scope; location is mandatory session context; bin names
@@ -26,10 +28,14 @@ phase is scheduled** — they are not "we'll work it out in the sprint" question
 > - **D-16** — Q-16: seven bin types + `availableForFulfilment`; surfaces F-26 → Q-29.
 > - **D-17** — T-0.4 case (b): bin data migrates from a third-party app.
 > - **D-18** — Q-13: NetSuite WMS SuiteApp not installed; D-07 confirmed.
-> - Also closed: **Q-10** (moot). New questions: **Q-29** (F-26), **Q-30** (auth licensing).
+> - **D-19** — browser transport & auth: **Suitelet is the API** (same origin, not a RESTlet — closes
+>   T-0.7); **Option C auth** (Available-Without-Login Suitelet, hashed-PIN operator login, HMAC token,
+>   no per-operator NetSuite user). New finding **F-27** (exposed endpoint). Closes **Q-02**, resolves
+>   **Q-30**. **Recommended, pending developer confirmation of three questions (see D-19).**
+> - Also closed: **Q-10** (moot). New question still open: **Q-29** (F-26 — with sponsor).
 >
-> **No hard blocker remains for a phase *start*.** Q-02, Q-06, Q-07, Q-09, Q-11, Q-12, Q-17, Q-25,
-> Q-27, Q-29, Q-30 are needed *during* their phases; Q-05 residual (cycle counting / structured RMA)
+> **No hard blocker remains for a phase *start*.** Q-06, Q-07, Q-09, Q-11, Q-12, Q-17, Q-25,
+> Q-27, Q-29 are needed *during* their phases; Q-05 residual (cycle counting / structured RMA)
 > is a release-scope call. **Phase 1 gates on T-0.3 closing this register with owners + dates.**
 > D-14 (multi-location) and D-13 (PWA) have propagation still to do beyond the spec touch-ups already
 > made — location scoping across the data/wave model, and the Phase 3 PWA design — flagged on their
@@ -38,7 +44,7 @@ phase is scheduled** — they are not "we'll work it out in the sprint" question
 | ID | Question | Why it matters | Blocks | Recommendation | Owner | Decision |
 |---|---|---|---|---|---|---|
 | ~~Q-01~~ | **CLOSED 2026-08-09 (D-13).** Handheld is a **responsive PWA, Android-first, served from NetSuite; iOS out of scope.** ⚠️ *This overrides the plan's recommendation of a native app and runs against AD-09's stated position that a browser/PWA client cannot dependably deliver durable offline persistence and background sync on rugged Android — AD-09, T-3.2 (durable queue), T-3.4 (client) and T-3.5 (reconnect) must be revisited to a PWA delivery (IndexedDB + Service Worker / Background Sync), with the residual offline-durability risk accepted or mitigated in writing.* | Phase 3 | *(superseded by the ruling above)* | TK | **Closed** |
-| **Q-02** | RESTlet authentication: Token-Based Auth or OAuth 2.0 machine-to-machine? Per-device or shared credentials? | Determines device provisioning and whether a lost handheld can be revoked without touching the other 49. | Phase 3 | Per-device TBA tokens. Shared credentials are not revocable in any useful sense. | | |
+| ~~Q-02~~ | **CLOSED 2026-08-09 (D-19) — subsumed into T-3.3.** Auth is **Option C**: Available-Without-Login Suitelet, operator ID + hashed PIN, HMAC session token; **no TBA in the browser, no per-operator NetSuite user.** Not a device-credential question anymore. See F-27 (exposed endpoint) and T-3.3. | — | — | — | TK | **Closed** |
 | ~~Q-03~~ | **CLOSED 2026-08-07 (D-03).** No bulk → picking consumes available bin batches directly, FEFO; when exhausted the SKU is out of stock. No blocked task, no escalation. | — | — | — | TK | **Closed** |
 | ~~Q-04~~ | **CLOSED 2026-08-07 (D-03).** One bin = one batch, so demand spanning bins spans batches. Summary picking is one task per SKU **per bin**. FEFO across bins; orders may split across batches. | — | — | — | TK | **Closed** |
 | **Q-05** | *(Reduced by D-09.)* **Receiving and putaway are now IN scope** (Phase 5B). Still open: are **cycle counting** and **returns/RMA putaway** in release 1? | `COUNT` sits in the event enum with no specification; returns have lot and bin implications. Both are smaller now that the inbound framework exists. | Release scope | Defer both to release 2 — the Phase 5B putaway engine makes them much cheaper to add later. | | |
@@ -65,4 +71,4 @@ phase is scheduled** — they are not "we'll work it out in the sprint" question
 | ~~Q-26~~ | **CLOSED 2026-08-08 (D-11).** **The WMS may go negative; NetSuite may not.** Outbound never posts where NetSuite lacks quantity — it defers and retries (T-4.7). Negative bin state is permitted but diagnostic (F-25). | — | — | — | TK | **Closed** |
 | **Q-27** | *(New, from D-09.)* What **over-receipt tolerance** applies against a PO line, and who may approve beyond it? | T-5.5 blocks or accepts based on this. Warehouses routinely receive slightly more than ordered. | Phase 5B | Confirm with procurement; a percentage tolerance with supervisor override above it is typical. | | |
 | **Q-29** | *(New, from F-26 / D-16.)* How should the system prevent NetSuite **over-committing stock held in non-fulfillable bins** (QUALITY/RETURN/DEFECT)? NetSuite counts it toward quantity on hand and commits it; the WMS cannot pick it, so those orders short-pick. Mirror of F-22. | Breaks the AD-17 commitment contract from the NetSuite side; NetSuite availability becomes fiction by the quarantine volume. | Phase 6/7 (allocation), Phase 1 if (a) chosen | **(a) RECOMMENDED** — a separate NetSuite **location** for non-fulfillable stock (moves across the boundary post an Inventory Transfer); (b) same location, accept permanent over-commit + short-pick handling; (c) NetSuite inventory status (Advanced Inventory, likely unavailable). Cross-refs Q-08 (multi-location). **Status: with sponsor.** | | |
-| **Q-30** | *(New, from Q-02 / D-13.)* **Commercial:** if the PWA authenticates via NetSuite session, every warehouse operator needs a **NetSuite user** — potentially the largest recurring cost in the programme. | 50 pickers/packers × full user licence is a real cost. Alternatives: **Employee Center** licences, or **a single integration user with operator identity carried in the payload** — but the latter trades away NetSuite-level audit attribution, which much of this design relies on (knowing who scanned what). | Phase 3 (before the auth model, Q-02, is settled) | Price the options before settling Q-02. Weigh licence cost against audit attribution. | | |
+| ~~Q-30~~ | **RESOLVED 2026-08-09 (D-19).** Option C (Available-Without-Login Suitelet + operator identity in payload) means **no NetSuite user per operator** — the licence cost is avoided. Audit attribution is preserved by validating the operator against `customrecord_wms_operator` and writing `custrecord_se_operator`. The residual is the exposed endpoint — F-27, mitigated by T-3.3. **Pending developer confirmation of the three D-19 questions.** | — | — | — | TK | **Closed** |

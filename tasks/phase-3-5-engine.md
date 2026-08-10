@@ -6,32 +6,34 @@
 
 *Blocked until Q-01 (handheld platform) and Q-02 (authentication) are decided.*
 
-### T-3.1 — `wms_rl_scan_ingest.js` — ingestion RESTlet
-**Depends on:** T-2.1, T-2.3, T-2.4 · **Resolves:** F-07, F-08 · **Implements:** AD-01
+### T-3.1 — `wms_sl_scan_ingest.js` — ingestion Suitelet (JSON API)
+**Depends on:** T-2.1, T-2.3, T-2.4, T-3.3 · **Resolves:** F-07, F-08 · **Implements:** AD-01, D-19 · *(RESTlet → Suitelet — same origin as the PWA, closes T-0.7)*
 
 **Narrative**
-As a handheld terminal, I want to POST a scan and get an immediate acknowledgement, so that the
-operator is never left waiting on an ERP transaction.
+As the handheld PWA, I want to POST a scan to a **same-origin** endpoint and get an immediate
+acknowledgement, so that the operator is never left waiting and the browser makes no cross-origin call.
 
 **Requirement**
-POST endpoint accepting the scan payload (uuid, eventType, operatorId, waveId, orderId,
-orderLineKey, skuCode, batchNumber, sourceBinId, targetBinId, qty, locationId, deviceId, clientTs).
-Flow: schema validation → resolve item/bin metadata from cache → read bin state projection (T-2.3)
-→ apply bin policy (T-2.3b) → `writeScanEvent` → update projection → return. **No saved search on
-the success path. No `record.transform`. No inventory posting. No lock. No duplicate detection** —
-NetSuite has no unique constraint (D-12) and a search on the hot path is banned, so a retried UUID may
-create a second row; the committer dedupes by UUID (AD-04). A repeated POST therefore always returns
-plain `SUCCESS` (safe: same UUID → one posting).
-Structured JSON responses for success, validation failure and platform error, each with a
-machine-readable code the client can branch on. Structured logging of execution time.
-Support an optional **batch payload** (array of events) so the client can drain its queue in fewer
-round-trips — a direct mitigation for F-09.
+A **Suitelet** (not a RESTlet — RESTlets are a different host and would force CORS; the PWA is served by
+a Suitelet, D-13, so its API is a sibling Suitelet, same origin). POST accepting the scan payload (uuid,
+eventType, operatorId, waveId, orderId, orderLineKey, skuCode, batchNumber, sourceBinId, targetBinId,
+qty, locationId, deviceId, clientTs) plus the **HMAC session token** (T-3.3). Flow: validate token
+(T-3.3) → schema validation → resolve item/bin metadata from cache → read bin state projection (T-2.3)
+→ apply bin policy (T-2.3b) → `writeScanEvent` (sets `externalid` = UUID) → update projection → return.
+**No saved search on the success path. No `record.transform`. No inventory posting. No lock.**
+**Idempotency (AD-04):** a duplicate UUID fails at the platform on `externalid` and returns
+`idempotent:true` — plus the committer dedupe safety net. Structured JSON responses for success,
+idempotent-duplicate, auth failure, validation failure and platform error, each with a machine-readable
+code. Structured logging of execution time. Support an optional **batch payload** (array of events) so
+the client can drain its queue in fewer round-trips — a direct mitigation for F-09.
 
 **Acceptance**
-- [ ] GIVEN a valid scan payload, WHEN posted, THEN a PENDING scan event is created and a success response returns; measured server time P95 < 600 ms and P99 < 1200 ms under the Phase 12 load profile.
+- [ ] GIVEN a valid scan payload with a valid session token, WHEN posted, THEN a PENDING scan event is created and a success response returns; measured server time P95 < 600 ms and P99 < 1200 ms under the Phase 12 load profile.
+- [ ] GIVEN the PWA and the API are both Suitelets, WHEN the browser POSTs, THEN the call is **same-origin** (no CORS preflight).
 - [ ] GIVEN a payload violating bin isolation, WHEN posted, THEN no event is created and the response carries `ERR_WMS_BIN_CONSTRAINT_VIOLATION` with the conflicting item and lot in the message.
-- [ ] GIVEN a duplicate UUID, WHEN posted, THEN the response is plain `SUCCESS` (a second row may exist; the committer supersedes all but one, so exactly one posting results — D-12/AD-04).
+- [ ] GIVEN a duplicate UUID, WHEN posted, THEN the create fails at the platform on `externalid` and the response is `SUCCESS` with `idempotent:true` — exactly one row exists.
 - [ ] GIVEN a batch of 20 events, WHEN posted in one request, THEN each is processed independently and the response contains a per-event result array.
+- [ ] GIVEN a request with a missing or invalid session token, WHEN posted, THEN it is rejected (see T-3.3) and no event is created.
 - [ ] GIVEN any request, WHEN governance is measured, THEN the success path executes zero saved searches.
 
 ---
@@ -103,23 +105,40 @@ the offline window so a chronically disconnected device or dead zone becomes vis
 
 ---
 
-### T-3.3 — Device authentication and token lifecycle
-**Depends on:** T-0.3 (Q-02), T-1.4 · **Resolves:** scope gap D
+### T-3.3 — Operator authentication and endpoint hardening
+**Depends on:** T-1.4 · **Resolves:** scope gap D, Q-02 (subsumed) · **Implements:** D-19 · *(rewritten — Option C, no per-operator NetSuite login)*
 
 **Narrative**
-As a security owner, I want each handheld individually identified and revocable, so that a lost
-device can be cut off without re-provisioning the fleet.
+As a security owner, I want operators authenticated without a NetSuite user each, and the public
+endpoint hardened, so that we avoid 50 user licences (Q-30) without leaving an open write endpoint.
 
 **Requirement**
-Implement the mechanism decided in Q-02 (TBA or OAuth 2.0 M2M). Per-device credentials — not one
-shared token. Documented provisioning, rotation and revocation runbook. Operator identity carried in
-the payload and validated against an active-employee list; device identity carried in the transport
-credential. Failed-authentication attempts logged.
+Auth model is **Option C (D-19)**: the SPA is served from an **Available Without Login** Suitelet and
+its API is a sibling Suitelet — **no NetSuite user per operator**, **no TBA in the browser**. Operator
+identity is carried in the payload onto `custrecord_se_operator`. Because the endpoint is
+internet-reachable and unauthenticated at the platform level, harden it in application code — **six
+controls**:
+
+1. **Operator login** — operator ID + **PIN or badge scan** validated against a **WMS operator custom
+   record** (`customrecord_wms_operator`) holding a **hashed PIN** (never plaintext) and an active flag.
+2. **Signed session token** — issued on login, **HMAC'd with a script-parameter secret**, carrying
+   operator + expiry. Every API call validates **signature, expiry and operator-active**.
+3. **IP allowlisting** where feasible (warehouse egress ranges).
+4. **Rate limiting** per token and per IP.
+5. **Execute-as-role** scoped to **create scan events and read reference data only** — never
+   transaction edit (ties to T-1.4).
+6. **Audit** — failed authentications and token-validation failures logged.
+
+Documented operator provisioning / PIN-reset / deactivation runbook. See **F-27** (internet-exposed
+write endpoint — accepted, mitigated by these controls, must be in the pre-go-live security review).
 
 **Acceptance**
-- [ ] GIVEN a device credential is revoked, WHEN that device posts, THEN it receives 401 and no event is created.
-- [ ] GIVEN an operator ID for an inactive employee, WHEN a scan is posted, THEN it is rejected with a distinct code.
-- [ ] GIVEN the runbook, WHEN a new device is provisioned by warehouse IT without developer involvement, THEN it authenticates successfully.
+- [ ] GIVEN a POST with **no or an invalid session token**, THEN it is rejected and **no event is created** *(the required negative test)*.
+- [ ] GIVEN an expired or tampered (bad-HMAC) token, THEN it is rejected with a distinct code.
+- [ ] GIVEN an operator ID for a deactivated `customrecord_wms_operator`, WHEN a scan is posted, THEN it is rejected.
+- [ ] GIVEN the operator record, THEN the PIN is stored **hashed** — no plaintext PIN exists anywhere.
+- [ ] GIVEN repeated calls above the configured rate, THEN they are throttled per token and per IP.
+- [ ] GIVEN the execute-as-role, WHEN it attempts to edit a transaction directly, THEN access is denied (T-1.4).
 
 ---
 
@@ -161,9 +180,10 @@ races structurally.
 `getInputData` searches PENDING events (indexed, paged). `map` emits a **JSON** group key —
 `{k:'ORDER', orderId}` for PICK/PACK, `{k:'MOVE', locationId, sourceBinId}` for REPLEN_MOVE /
 BIN_TRANSFER / PUTAWAY — never an underscore-delimited string. Events are flipped to `PROCESSING` on
-claim so a concurrent run cannot pick them up. **Dedupe by `custrecord_se_event_id` within the group
-(AD-04, D-12): keep the earliest, mark the rest `SUPERSEDED`, post from the survivor** — this is the
-idempotency guarantee, since NetSuite has no unique constraint. **Bin-affecting work
+claim so a concurrent run cannot pick them up. **Dedupe by UUID within the group (AD-04, D-12): keep
+the earliest, mark the rest `SUPERSEDED`, post from the survivor** — this is the **safety-net** layer;
+the primary idempotency guard is the platform-unique `externalid` set at ingest (T-2.4), so duplicates
+should be rare here but are handled if they occur. **Bin-affecting work
 (`{k:'MOVE',...}` and any bin-state settlement) runs on a single dedicated M/R queue** so two threads
 never touch the same bin (AD-05 withdrawn; single-threaded bin-state settlement). `summarize` logs
 counts by outcome and feeds T-9.2. **No locks are taken anywhere.**

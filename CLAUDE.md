@@ -28,21 +28,23 @@ version.*
 2. **Bin rules come from the bin's policy, never from a hardcoded type check.** No
    `if (binType === 'UNIT' || binType === 'BULK')` anywhere. Staging, receiving and QC bins are
    legitimately mixed-SKU. (F-18, AD-14)
-3. **Never perform a saved search on the ingestion success path.** NetSuite has **no value-uniqueness
-   constraint** (D-12), so idempotency is **not** a unique index — the ingestion RESTlet inserts the
-   scan event with no pre-read (a retry may create a duplicate row), and the **committer** dedupes by
-   `custrecord_se_event_id`: group by UUID, keep the first, mark the rest `SUPERSEDED`. The guarantee
-   is "no duplicate *ledger postings*". Bin state is a record lookup by internal ID. (F-08, AD-04, D-12)
+3. **Never perform a saved search on the ingestion success path.** Idempotency uses the record's
+   standard **`externalid`** (= client UUID), which **is** platform-enforced unique (D-12) — the
+   ingestion **Suitelet** sets `externalid` and attempts the create; a duplicate fails at the platform
+   and is caught (no pre-read, no search). The **committer** additionally dedupes by UUID (keep first,
+   rest `SUPERSEDED`) as a safety net. Custom text fields have no uniqueness — only `externalid` does.
+   Bin state is a record lookup by internal ID. (F-08, AD-04, D-12)
 4. **Never call `record.transform` synchronously from a Suitelet or RESTlet.** All ledger writes go
    through the Map/Reduce committer. One `record.transform` per sales order, ever. (F-15, AD-01)
 5. **Never build a group key by string concatenation.** Handlers return key **objects**, serialised
    centrally. Enum values contain underscores. (F-12, AD-06, AD-15)
 6. **Never match fulfillment lines by item ID.** Use the SO line unique key, and aggregate all events
    for a line before touching the record. Unmatched lines get `itemreceive = false` explicitly. (F-14, AD-07)
-7. **No distributed locks — they were withdrawn (D-12).** NetSuite has no value-uniqueness primitive
-   to build a race-free lock on, so `customrecord_wms_concurrency_lock` is deleted. Order work is
-   serialised by AD-06 grouping plus flipping events to `PROCESSING` on claim; **bin-affecting commit
-   work is single-threaded through one Map/Reduce queue** (single-threaded bin-state settlement).
+7. **No distributed locks — withdrawn by choice (D-12), not because they're impossible.** A lock
+   *could* be built on `externalid`, but it is **rejected on simplicity**: order work is serialised by
+   AD-06 grouping plus flipping events to `PROCESSING` on claim, and **bin-affecting commit work is
+   single-threaded through one Map/Reduce queue** (single-threaded bin-state settlement) — correct by
+   construction, no TTL/reaper/deadlock handling. `customrecord_wms_concurrency_lock` is deleted.
    Ingestion still takes no lock. (D-01, D-12; supersedes AD-05)
 8. **Never leave a failed event as just a log line.** Every FAILED event raises a
    `customrecord_wms_exception`. The operator already moved the stock. (F-04, AD-11)
@@ -51,8 +53,8 @@ version.*
 10. **Never let the dashboard query the raw scan event table.** Read metric snapshots. (F-11, AD-12)
 11. **The handheld must work with the radio off.** Offline is the expected state, not a failure
     mode. Any scan requiring a server round-trip to validate is a design defect. (D-04, AD-09)
-12. **Never add an event type by editing the RESTlet, mapper or reducer.** Register a handler.
-    (AD-15)
+12. **Never add an event type by editing the ingestion Suitelet, mapper or reducer.** Register a
+    handler. (AD-15)
 13. **`binnumber` must not appear anywhere in the codebase.** NetSuite has no bins — bins live only
     in the WMS. No Bin Management feature, no Bin Transfer record type, no bin field on any
     inventory detail line. Bin movements post **nothing** to NetSuite. (F-19, AD-16, D-07)

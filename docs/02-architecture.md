@@ -10,19 +10,19 @@ Retained as specified: **Ingest → Stage → Async commit.** Nothing on the ope
 touches a NetSuite transaction record.
 
 ```
-Handheld (optimistic UI, durable outbound queue)
-   │  POST /wms/scan          (TBA-signed)
+PWA (optimistic UI, IndexedDB durable queue; served by a Suitelet — D-13)
+   │  POST to sibling Suitelet   (same origin; HMAC session token — D-12/T-3.3, no TBA)
    ▼
-Ingestion RESTlet             ~≤600ms P95
+Ingestion Suitelet  wms_sl_scan_ingest   ~≤600ms P95   (D-19: Suitelet, not RESTlet)
    │  advisory validation against static cache
-   │  INSERT customrecord_wms_scan_event  status=PENDING
+   │  INSERT customrecord_wms_scan_event  status=PENDING, externalid = client UUID  ← AD-04 layer 1
    ▼
 Scan Event table (append-only, immutable except status)
    │
    ▼
 Map/Reduce ledger committer   (SuiteCloud Plus)
-   │  dedupe by UUID (keep first, rest SUPERSEDED)   ← AD-04
-   │  group by ORDER (not event type); bin-affecting work on ONE queue  ← AD-05 (no locks, D-12)
+   │  dedupe by UUID (keep first, rest SUPERSEDED)   ← AD-04 layer 2 (safety net)
+   │  group by ORDER (not event type); bin-affecting work on ONE queue  ← AD-05 (locks rejected, D-12)
    │  RE-ASSERT invariants vs live inventory  ← authoritative
    │  one record.transform per order
    ├── success → status=POSTED, link to txn
@@ -106,39 +106,46 @@ mismatch, not closed.
 A distributed lock or a heavier concurrency primitive on the ingestion path would re-introduce exactly
 the cost D-01 removed, to close a window the backstop already covers. It is deliberately not built.
 
-## AD-04 — Committer-side dedupe idempotency *(rewritten per D-12; supersedes unique-index idempotency)*
+## AD-04 — Two-layer idempotency: `externalid` primary, committer dedupe safety net *(rewritten per D-12)*
 
-NetSuite has **no value-uniqueness constraint** (D-12) — a "unique" custom field is application-layer
-validation, not a race-free database constraint. So idempotency is **not** enforced at insert time.
+Custom fields have no value-uniqueness constraint, but the record's **standard `externalid`** field
+**is** platform-enforced unique (D-12). Idempotency uses it, with a committer safety net:
 
-- **Ingestion** inserts the scan event directly, no pre-read, no reliance on a unique field. A retried
-  POST of the same UUID may create a **duplicate row** — that is expected and harmless.
-- **The committer dedupes.** When it groups events (AD-06), it groups by `custrecord_se_event_id`
-  first: keep the earliest row, mark the rest **`SUPERSEDED`**, and post from the survivor. The
-  guarantee is **"no duplicate *ledger postings*"**, which is the property that matters — not "no
-  duplicate rows".
+- **Layer 1 — `externalid` = client UUID (primary guard).** Ingestion sets `externalid` to the scan's
+  UUID and attempts the create. A duplicate UUID **fails at the platform** (unique `externalid`) and is
+  caught → return success/idempotent. No pre-read, no hot-path search.
+- **Layer 2 — committer-side dedupe (safety net).** When the committer groups events (AD-06) it groups
+  by UUID first: keep the earliest, mark the rest **`SUPERSEDED`**, post from the survivor. So even if a
+  duplicate ever lands (e.g. an `externalid` write path that bypassed layer 1), it never becomes a
+  duplicate **ledger posting**.
 
 ```
-ingest:  create + save                → { status:'SUCCESS', eventId }   // may duplicate on retry; fine
-         catch platform error         → { status:'ERROR', code, message, retryable:true|false }
+ingest:  create with externalid = UUID → { status:'SUCCESS', eventId }
+         catch DUP_RECORD (externalid)  → { status:'SUCCESS', idempotent:true }   // safe retry
+         catch other platform error     → { status:'ERROR', code, message, retryable:true|false }
 
-commit:  group by UUID → keep first, mark rest SUPERSEDED → post once
+commit:  group by UUID → keep first, mark rest SUPERSEDED → post once   // safety net
 ```
 
 Client UUIDs are v4, generated **before** the first send attempt and reused verbatim on every retry of
-that scan — so all retries of one scan share a UUID and collapse to one posting.
+that scan — so all retries of one scan share a UUID and collapse to one posting at **both** layers.
 
-## AD-05 — *(WITHDRAWN per D-12)* No distributed locks
+## AD-05 — *(WITHDRAWN per D-12 — rejected on simplicity, NOT impossible)* No distributed locks
 
-**Withdrawn.** The lock protocol required a race-free "acquire = attempt a unique create" primitive,
-and NetSuite has no value-uniqueness constraint to provide it (D-12). Rather than build a lock on a
-foundation that does not exist, the races it guarded are removed structurally:
+**Withdrawn — by choice, not for lack of a primitive.** A lock *could* be built on `externalid`
+(acquire = create a lock record whose `externalid` is the resource id; the loser catches the
+duplicate). It is **rejected because the races it would guard are removed more simply**, so the lock
+adds cost (TTL, reaper, deadlock ordering, stale-lock handling) for no benefit. *If a future reader
+finds `externalid` and thinks "the lock was possible after all" — yes, it was; it was still the wrong
+choice.*
 
-- **Order commits** are already serialised by AD-06 (all of an order's events land in one reduce
-  invocation) plus flipping claimed events to `PROCESSING`. No order lock needed.
+- **Order commits** are serialised by AD-06 (all of an order's events land in one reduce invocation)
+  plus flipping claimed events to `PROCESSING`. No order lock needed — this was always independent of
+  the uniqueness question.
 - **Bin-affecting commit work** runs **single-threaded through one Map/Reduce queue** — *single-threaded
-  bin-state settlement*. Two threads never target the same bin because there is only one thread. The
-  cost is lost parallelism on that phase; accepted (D-12).
+  bin-state settlement* — correct **by construction**: one thread, so two threads never target the same
+  bin. Under D-07 bin movements post nothing to NetSuite, so the serialised path is cheap. The cost is
+  lost parallelism on that phase; accepted (D-12).
 
 `customrecord_wms_concurrency_lock`, the stale-lock reaper (was T-11.2), and the `STALE_LOCK` /
 `LOCK_TIMEOUT` exception types are **deleted**. Ingestion still takes no lock.
@@ -321,7 +328,7 @@ registerHandler('REPLEN_MOVE', {
 | Thresholds resolved from config, injected via `ctx` | F-16 — one threshold value, structurally |
 
 **The flexibility payoff:** adding an event type — QC_HOLD, KIT_ASSEMBLY, CYCLE_COUNT, CROSS_DOCK —
-is a registration plus a handler. No edits to the RESTlet, the mapper, the key parser or the
+is a registration plus a handler. No edits to the ingestion Suitelet, the mapper, the key parser or the
 reducer. That matters here because Q-05 defers receiving, counting and returns to a later release:
 this is the seam that lets them be added without reopening Phase 4.
 

@@ -63,9 +63,11 @@ Management / concurrency monitor). Model peak scan demand **from the T-0.1 item 
 FRD's figures**, which are unverified. With serial out of scope the one-scan-per-line assumption
 broadly holds, but it should still be validated against the census rather than taken on trust.
 Slots required = req/s × mean server seconds. **Include inbound receipt scanning (Phase 5B)**, which
-the FRD's model excludes entirely. Produce a written allocation table (AD-08) with
-≥ 20% headroom. Where the budget does not close, produce costed options: additional SuiteCloud Plus
-licences, reduced scan frequency, or client-side event batching.
+the FRD's model excludes entirely. **The scan endpoint is a Suitelet, not a RESTlet (D-19)**
+— per-invocation governance and concurrent-slot cost are the same, so the numbers are unchanged; only
+the wording. RESTlet-based integrations, if any remain, are separate. Produce a written allocation
+table (AD-08) with ≥ 20% headroom. Where the budget does not close, produce costed options: additional
+SuiteCloud Plus licences, reduced scan frequency, or client-side event batching.
 
 **Acceptance**
 - [ ] GIVEN a week of production concurrency telemetry, WHEN the budget is modelled, THEN a slot allocation table covering scanning, M/R, clustering, dashboard, integrations and headroom is published.
@@ -163,21 +165,19 @@ jest harness with SuiteScript module stubs so pure logic is unit-testable.
 ### T-0.6 — Spike: prove or disprove atomic field uniqueness
 **Depends on:** T-0.5 · **Gates:** T-1.1 · **De-risks:** AD-04, AD-05 · *(new 2026-08-09 — Critique 1)*
 
-> **ANSWERED 2026-08-09 — DISPROVEN.** Sponsor ruling: **NetSuite has no value-uniqueness constraint**
-> (field "unique" is application-layer, not a DB constraint, and is not atomic under concurrent
-> saves). Consequences ruled:
-> - **AD-04 (idempotency) → committer-side dedupe.** Group scan events by UUID in the committer, keep
->   the first, mark the rest `SUPERSEDED`. The guarantee is "no duplicate *ledger postings*", not "no
->   duplicate rows".
-> - **AD-05 (locking) → withdrawn.** Replaced by **single-threaded bin-state settlement** (all
->   bin-affecting commit work through one queue). `customrecord_wms_concurrency_lock` is **deleted.**
+> **ANSWERED 2026-08-09 (corrected).** Two-part answer (see D-12): **custom text fields have no
+> value-uniqueness constraint (TK), but the standard `externalid` field IS platform-unique
+> (developer).** Consequences ruled:
+> - **AD-04 (idempotency) → `externalid` = UUID as the primary guard (attempt create, catch duplicate)
+>   PLUS committer-side dedupe (keep first, rest `SUPERSEDED`) as a safety net.** Both layers.
+> - **AD-05 (locking) → withdrawn *by choice*.** A lock is *possible* on `externalid` but **rejected on
+>   simplicity** — single-threaded bin-state settlement is correct by construction. `customrecord_wms_concurrency_lock`
+>   is **deleted.** *(Not "impossible" — do not reinstate the lock on discovering `externalid`.)*
 >
-> ✅ **Recorded as D-12 and propagated 2026-08-09.** AD-04 (→ committer dedupe), AD-05 (withdrawn),
-> CLAUDE.md invariants #3 & #7, `customrecord_wms_concurrency_lock` (§3.2, deleted), T-1.1, T-2.2
-> (deleted), T-2.4, T-4.1/4.3/4.4, T-11.2, T-12.3, F-02 and the STALE_LOCK/LOCK_TIMEOUT exception
-> types have all been updated. The spike below is retained for traceability only — **the answer is
-> already known (no value-uniqueness constraint); T-0.6 need not be run.** If run anyway, it should
-> *confirm* the finding.
+> ✅ **Recorded as D-12 and propagated 2026-08-09.** AD-04, AD-05, CLAUDE.md #3 & #7,
+> `customrecord_wms_concurrency_lock` (§3.2, deleted), T-1.1 (real `externalid` uniqueness test), T-2.2
+> (deleted), T-2.4, T-3.1, T-4.1/4.3/4.4, T-11.2, T-12.3, F-02, F-08 all updated. The spike below is
+> retained for traceability only — **the answer is known; T-0.6 need not be run.**
 
 **Narrative**
 As the architect, I want the uniqueness assumption tested before two architecture decisions are
@@ -209,26 +209,42 @@ and whether it is catchable.
 
 ---
 
+### T-0.7 — Confirm the browser→server transport (same-origin)
+**Depends on:** — · **Implements:** D-19 · *(created 2026-08-09 — was missing from the tree; recorded now)*
+
+> **CLOSED 2026-08-09 (D-19).** Question: can the PWA call a RESTlet directly? **No** — Suitelets and
+> RESTlets are served from **different hosts**, so a browser→RESTlet call is cross-origin (CORS).
+> **Answer: make the Suitelet the API.** The PWA is served by a Suitelet (D-13) and its JSON API is a
+> **sibling Suitelet — same origin, no CORS**. RESTlets leave the browser path (kept for
+> server-to-server integration only). `wms_rl_scan_ingest.js` → `wms_sl_scan_ingest.js` (T-3.1).
+> Governance and concurrent-slot cost are identical to a RESTlet — T-0.2 numbers unchanged.
+
+**Acceptance**
+- [ ] GIVEN the PWA and its API are both Suitelets, THEN browser calls are same-origin with no CORS preflight (demonstrated in DEV).
+- [ ] GIVEN the transport decision, THEN the ingestion entry point is a Suitelet (`wms_sl_scan_ingest.js`) and no RESTlet is on the browser path.
+
+---
+
 # PHASE 1 — Data Model & Configuration
 
 ### T-1.1 — Create scan event and config records
-**Depends on:** T-0.5 · **Resolves:** F-08 · **Spec:** `03-data-model.md` §3.1, §3.10 · *(rewritten per D-12 — lock record withdrawn, no unique constraint)*
+**Depends on:** T-0.5 · **Resolves:** F-08 · **Spec:** `03-data-model.md` §3.1, §3.10 · *(rewritten per D-12 — idempotency via `externalid`; lock record withdrawn)*
 
 **Narrative**
 As a developer, I want the core custom records deployed with correct field types, so that the ingestion
-and commit pipeline has its schema — with idempotency handled by the committer, not a database
-constraint NetSuite does not provide (D-12).
+and commit pipeline has its schema — with idempotency enforced by the platform-unique `externalid`
+(AD-04) and a committer safety net, and no lock record (rejected on simplicity, D-12).
 
 **Requirement**
 Deploy `customrecord_wms_scan_event` and `customrecord_wms_config` exactly per §3.1/§3.10 including all
-additions marked bold. **No `customrecord_wms_concurrency_lock`** — withdrawn (D-12). **No unique
-constraint on `custrecord_se_event_id`** — NetSuite has none; idempotency is committer-side dedupe
-(AD-04). `custrecord_se_status` must include `SUPERSEDED` (the dedupe outcome). Seed the config record
-with agreed defaults. Create the composite search index `(status, type, location)` supporting the M/R
-input search, and ensure `custrecord_se_event_id` is **searchable** (for the committer's dedupe group),
-though not unique.
+additions marked bold. **Idempotency key = `externalid`** (the record's standard field, platform-unique
+per D-12), set to the client UUID by ingestion. `custrecord_se_event_id` mirrors the UUID, **searchable,
+not unique**. `custrecord_se_status` must include `SUPERSEDED` (the committer safety-net outcome).
+**No `customrecord_wms_concurrency_lock`** — withdrawn (D-12). Seed the config record with agreed
+defaults. Create the composite search index `(status, type, location)` supporting the M/R input search.
 
 **Acceptance**
+- [ ] GIVEN two scan events created with the **same `externalid`**, WHEN the second is saved, THEN NetSuite **rejects it as a duplicate** (platform-enforced uniqueness — the real test the earlier revision wrongly dropped).
 - [ ] GIVEN the deployed scan-event record, THEN every field in §3.1 exists with the specified type, `custrecord_se_status` includes `SUPERSEDED`, and `custrecord_se_event_id` is searchable.
 - [ ] GIVEN no lock record is deployed, THEN the project contains no `customrecord_wms_concurrency_lock` and no code references it (CI-greppable).
 - [ ] GIVEN the deployed config record, THEN every value listed in §3.10 is present and readable via the config module.
@@ -297,13 +313,15 @@ As a compliance owner, I want WMS roles scoped to least privilege, so that a pic
 cannot post an inventory adjustment or view financial data.
 
 **Requirement**
-Define WMS Picker, WMS Packer, WMS Supervisor, WMS Integration (RESTlet) roles. The integration role
-gets create on scan events and read on reference data only — **not** transaction edit; the M/R script
-runs under an elevated deployment role. Supervisors get the exception queue and manual adjustment.
-Document the permission matrix.
+Define WMS Picker, WMS Packer, WMS Supervisor roles, and the **WMS Scan-Endpoint execute-as role**
+(the role the Available-Without-Login ingestion Suitelet runs under, D-19/T-3.3 — replaces the old
+"Integration (RESTlet)" role). That execute-as role gets **create on scan events and read on reference
+data only — not transaction edit**; the M/R committer runs under a separate elevated deployment role.
+Operators authenticate at the application layer (T-3.3), **not** via NetSuite login — they have no
+user. Supervisors get the exception queue and manual adjustment. Document the permission matrix.
 
 **Acceptance**
-- [ ] GIVEN the WMS Integration role, WHEN it attempts to create an Item Fulfillment directly, THEN access is denied.
+- [ ] GIVEN the scan-endpoint execute-as role, WHEN it attempts to create an Item Fulfillment directly, THEN access is denied.
 - [ ] GIVEN a Picker role, WHEN they open the exception queue Suitelet, THEN access is denied.
 - [ ] GIVEN the permission matrix, THEN it is reviewed and signed off by the compliance owner.
 
@@ -338,9 +356,9 @@ prohibition and the reason (F-01).
 ### T-2.2 — ~~`wms_lib_lock.js` — distributed lock~~ **DELETED (D-12)**
 **Resolves:** F-02
 
-> **This task is withdrawn.** A race-free lock needs "acquire = attempt a unique create", and NetSuite
-> has no value-uniqueness constraint (D-12). There is no lock module. The races it would have guarded
-> are removed structurally instead (AD-05, withdrawn):
+> **This task is withdrawn (D-12) — rejected on simplicity, not impossible.** A race-free lock *could*
+> be built on `externalid` (which is platform-unique), but there is no lock module because the races it
+> would guard are removed more cheaply (AD-05, withdrawn by choice):
 > - **Order commits** — serialised by AD-06 grouping + flipping events to `PROCESSING` on claim.
 > - **Bin-affecting commit work** — **single-threaded through one Map/Reduce queue** (single-threaded
 >   bin-state settlement, T-4.1/T-4.3).
@@ -418,26 +436,27 @@ always passes. `custrecord_wb_blocked` fails with a distinct code. Policy is a p
 ---
 
 ### T-2.4 — `wms_lib_idempotency.js` and event writer
-**Depends on:** T-1.1 · **Resolves:** F-08 · **Implements:** AD-04 · *(rewritten per D-12 — dedupe is committer-side, not a unique-field catch)*
+**Depends on:** T-1.1 · **Resolves:** F-08 · **Implements:** AD-04 · *(rewritten per D-12 — `externalid` primary + committer dedupe safety net)*
 
 **Narrative**
 As a handheld operator on unreliable Wi-Fi, I want retrying a failed scan to be harmless, so that a
 dropped connection never double-counts a pick.
 
 **Requirement**
-NetSuite has no value-uniqueness constraint (D-12), so idempotency is **not** enforced at write time.
-`writeScanEvent(payload)` performs a direct create/save with **no pre-read and no unique-field
-reliance** — a retried UUID may create a second row, which is expected. Set server timestamp, preserve
-client timestamp, record device ID. Classify every error as retryable or terminal and return
-`retryable` so the client's queue can decide.
+**Layer 1 — `externalid` (primary).** `writeScanEvent(payload)` sets the record's standard `externalid`
+to the client UUID and attempts a direct create with **no pre-read** (no hot-path search). A duplicate
+UUID **fails at the platform** (`externalid` is unique, D-12) — catch the duplicate-record error and
+return `{status:'SUCCESS', idempotent:true, eventId:<existing>}`. Set server timestamp, preserve client
+timestamp, record device ID. Classify every other error as retryable or terminal and return `retryable`
+so the client's queue can decide.
 
-**Dedupe belongs to the committer, not here.** The committer (T-4.1) groups by `custrecord_se_event_id`,
-keeps the earliest row, and marks the rest `SUPERSEDED` — so duplicate rows never become duplicate
-ledger postings. Provide `dedupeByEventId(events)` as the pure helper the committer calls (keep-first,
-return survivors + superseded ids); this is the unit-testable core.
+**Layer 2 — committer dedupe (safety net).** Provide `dedupeByEventId(events)` as a pure helper the
+committer (T-4.1) calls: group by UUID, keep the earliest, return survivors + superseded ids. This
+guarantees "no duplicate *ledger posting*" even if a duplicate row ever slips past layer 1. It is the
+unit-testable core.
 
 **Acceptance**
-- [ ] GIVEN the same UUID written twice (sequentially or concurrently), THEN both writes succeed with no error to the operator, and **at most one is ever posted** because the committer supersedes the rest.
+- [ ] GIVEN the same UUID written twice, WHEN the second is saved, THEN it fails at the platform on `externalid` and the writer returns `idempotent: true` — exactly one row exists.
 - [ ] GIVEN `dedupeByEventId` over events with duplicate UUIDs, THEN it returns exactly one survivor per UUID (the earliest) and the rest flagged `SUPERSEDED` — verified by unit test with no NetSuite account.
 - [ ] GIVEN the writer runs, WHEN governance usage is measured, THEN no saved search is executed on the success path.
 - [ ] GIVEN a transient platform error, THEN the response sets `retryable: true`; given a validation error, `retryable: false`.
@@ -461,7 +480,7 @@ context from T-2.5, never as literals.
 
 **Acceptance**
 - [ ] GIVEN `REPLEN_MOVE` and `BIN_TRANSFER` events, WHEN group keys are produced and parsed, THEN identifiers round-trip correctly despite the underscores — verified by unit test. *(F-12)*
-- [ ] GIVEN a search of the RESTlet, mapper and reducer, THEN none contains a `switch` or `if` branching on event type. *(F-15)*
+- [ ] GIVEN a search of the ingestion Suitelet, mapper and reducer, THEN none contains a `switch` or `if` branching on event type. *(F-15)*
 - [ ] GIVEN a handler whose `requiredFields` are not all present, WHEN an event is dispatched, THEN it is rejected before any record I/O with a field-level message. *(F-13)*
 - [ ] GIVEN `governanceEst` exceeds remaining usage, WHEN the reducer dispatches, THEN it yields **before** attempting the work rather than failing partway. *(F-17)*
 - [ ] GIVEN a new event type is registered with a handler and nothing else is edited, THEN it ingests, groups and commits end to end — demonstrated with a throwaway type in test.
