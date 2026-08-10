@@ -140,6 +140,7 @@ Then quantify: number of bins, SKUs affected, units to move, and estimated migra
 - [ ] GIVEN the export, THEN it is audited for single-SKU/single-batch compliance and a **migration** plan is produced (Phase 10).
 - [ ] GIVEN the export, THEN it is confirmed whether it carries bin **contents** as well as **definitions**; if definitions only, an opening-count plan for bin state is recorded.
 - [ ] GIVEN the migration, THEN the bin-master data source for T-1.3 is named (the third-party app export) with an owner — T-0.4 and T-1.3 cross-reference each other.
+- [ ] GIVEN two source bins that collapse to the **same `<LOCATIONCODE>-<BINCODE>` name**, WHEN the import runs, THEN it **fails that row, never overwrites** — bin-code uniqueness is per the location-prefixed `externalid` (D-14/D-12), and a collision is a data error to resolve, not silently merge.
 
 ---
 
@@ -545,10 +546,13 @@ similarity threshold and cart capacity can be adjusted from operational experien
 
 **Requirement**
 Read `customrecord_wms_config` through the cache with a short TTL, exposing typed getters with
-documented defaults. **No magic numbers anywhere else in the codebase** — enforced by a lint rule
-where practical and by code review otherwise. Single source of truth for the similarity threshold,
-ending the 50%/60%/0.50 conflict.
+documented defaults. **Getters take a location: `getConfig(locationId)` (D-14)** — resolve the
+**global-defaults row overlaid by the location override row, field-by-field** (§3.10 precedence: a
+value present on the location row wins, absent inherits global). **No magic numbers anywhere else in
+the codebase** — enforced by a lint rule where practical and by code review otherwise. Single source of
+truth for the similarity threshold, ending the 50%/60%/0.50 conflict.
 
 **Acceptance**
 - [ ] GIVEN the similarity threshold is changed on the config record, WHEN the next clustering run executes (after TTL), THEN it uses the new value with no deployment.
+- [ ] GIVEN a per-location override for cart capacity and no override for similarity threshold, WHEN `getConfig(locationId)` runs, THEN cart capacity comes from the location row and similarity threshold inherits the global default. *(D-14)*
 - [ ] GIVEN a code search for the literals `0.5`, `0.6`, `120`, `50000`, THEN none appear as behavioural constants outside the config module and its tests.

@@ -32,14 +32,15 @@ phase is scheduled** — they are not "we'll work it out in the sprint" question
 >   T-0.7); **Option C auth** (Available-Without-Login Suitelet, hashed-PIN operator login, HMAC token,
 >   no per-operator NetSuite user). New finding **F-27** (exposed endpoint). Closes **Q-02**, resolves
 >   **Q-30**. **Recommended, pending developer confirmation of three questions (see D-19).**
-> - Also closed: **Q-10** (moot). New question still open: **Q-29** (F-26 — with sponsor).
+> - Also closed: **Q-10** (moot). Open questions still: **Q-29** (F-26 — with sponsor).
+> - **D-14 propagated 2026-08-09** (standalone pass — see the D-14 log entry for the full list of what
+>   changed). Surfaced **Q-31** (one-location-per-session, assumed yes) and **Q-32** (order whose
+>   committed stock spans locations) — both **left open, not resolved**.
 >
 > **No hard blocker remains for a phase *start*.** Q-06, Q-07, Q-09, Q-11, Q-12, Q-17, Q-25,
-> Q-27, Q-29 are needed *during* their phases; Q-05 residual (cycle counting / structured RMA)
-> is a release-scope call. **Phase 1 gates on T-0.3 closing this register with owners + dates.**
-> D-14 (multi-location) and D-13 (PWA) have propagation still to do beyond the spec touch-ups already
-> made — location scoping across the data/wave model, and the Phase 3 PWA design — flagged on their
-> rows and tasks.
+> Q-27, Q-29, Q-31, Q-32 are needed *during* their phases; Q-05 residual (cycle counting / structured
+> RMA) is a release-scope call. **Phase 1 gates on T-0.3 closing this register with owners + dates.**
+> D-13 (PWA) detailed design remains held pending the three D-19 developer confirmations.
 
 | ID | Question | Why it matters | Blocks | Recommendation | Owner | Decision |
 |---|---|---|---|---|---|---|
@@ -72,3 +73,5 @@ phase is scheduled** — they are not "we'll work it out in the sprint" question
 | **Q-27** | *(New, from D-09.)* What **over-receipt tolerance** applies against a PO line, and who may approve beyond it? | T-5.5 blocks or accepts based on this. Warehouses routinely receive slightly more than ordered. | Phase 5B | Confirm with procurement; a percentage tolerance with supervisor override above it is typical. | | |
 | **Q-29** | *(New, from F-26 / D-16.)* How should the system prevent NetSuite **over-committing stock held in non-fulfillable bins** (QUALITY/RETURN/DEFECT)? NetSuite counts it toward quantity on hand and commits it; the WMS cannot pick it, so those orders short-pick. Mirror of F-22. | Breaks the AD-17 commitment contract from the NetSuite side; NetSuite availability becomes fiction by the quarantine volume. | Phase 6/7 (allocation), Phase 1 if (a) chosen | **(a) RECOMMENDED** — a separate NetSuite **location** for non-fulfillable stock (moves across the boundary post an Inventory Transfer); (b) same location, accept permanent over-commit + short-pick handling; (c) NetSuite inventory status (Advanced Inventory, likely unavailable). Cross-refs Q-08 (multi-location). **Status: with sponsor.** | | |
 | ~~Q-30~~ | **RESOLVED 2026-08-09 (D-19).** Option C (Available-Without-Login Suitelet + operator identity in payload) means **no NetSuite user per operator** — the licence cost is avoided. Audit attribution is preserved by validating the operator against `customrecord_wms_operator` and writing `custrecord_se_operator`. The residual is the exposed endpoint — F-27, mitigated by T-3.3. **Pending developer confirmation of the three D-19 questions.** | — | — | — | TK | **Closed** |
+| **Q-31** | *(New, from D-14 propagation.)* **Assumption to confirm:** one operator holds **one location per session** — switching is an explicit action (full cache purge + re-warm, needs connectivity), never two locations concurrently. | Governs the login/session model, cache-warm cost and the T-3.2/T-3.4 flow. If multi-location sessions were ever allowed, the cache and scan-stamping model would change materially. | Phase 3 | **Assumed yes (one at a time).** Recorded as an assumption per D-14; confirm before Phase 3 build. | | |
+| **Q-32** | *(New, from D-14 / T-6.2.)* How is a sales order handled whose **committed stock spans more than one location**? A wave never spans locations (D-14), so such an order cannot be served by a single wave. | Waves and allocation are location-partitioned; a multi-location order needs an explicit rule (split across waves per location, or restrict to a primary location). Currently flagged out of scope, not silently split. | Phase 6 | Confirm the fulfilment rule; likely split per location into sibling waves, but that is a customer-experience decision. | | |

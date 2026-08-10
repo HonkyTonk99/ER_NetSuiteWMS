@@ -13,19 +13,24 @@ serves many orders instead of one.
 
 **Requirement**
 Pure, dependency-free module (fully unit-testable). `jaccard(setA, setB) = |A∩B| / |A∪B|`.
-`buildSkuIndex(orders)` → `Map<skuId, orderId[]>`. `generateCandidatePairs(index, fanOutCap)` — only
-pairs sharing ≥ 1 SKU, skipping SKUs whose order count exceeds the cap. `cluster(orders, opts)` with
-`{threshold, maxOrders, maxLines, maxUnits, zone, shipByBucket}` from config — **the single source of
-the threshold value** (F-16). Deterministic seed ordering by (shipBy, orderId) so runs are
-reproducible.
+**Partition orders by location first (D-14): a wave never spans locations, so candidate generation and
+scoring run within one location.** This is both a correctness rule (no cross-location wave) **and a
+performance property** — partitioning shrinks the candidate set before the O(pairs) step, on top of the
+share-≥1-SKU filter. `buildSkuIndex(orders)` → `Map<skuId, orderId[]>` **built per location**.
+`generateCandidatePairs(index, fanOutCap)` — only pairs sharing ≥ 1 SKU, skipping SKUs whose order
+count exceeds the cap. `cluster(orders, opts)` with `{threshold, maxOrders, maxLines, maxUnits, zone,
+shipByBucket}` from **per-location config** (§3.10 precedence — cart capacity differs by warehouse) —
+**the single source of the threshold value** (F-16). Deterministic seed ordering by (shipBy, orderId)
+so runs are reproducible. Zone names are **location-scoped** (may repeat across locations).
 
 **Acceptance**
 - [ ] GIVEN orders A={1,2,3} and B={2,3,4}, THEN `jaccard` returns 0.5 exactly.
+- [ ] GIVEN two orders in **different locations** sharing every SKU, WHEN clustering runs, THEN they are **never** placed in the same wave (partitioned by location first). *(D-14)*
 - [ ] GIVEN two orders sharing no SKUs, WHEN candidates are generated, THEN that pair is never compared.
 - [ ] GIVEN a SKU appearing on more orders than the fan-out cap, THEN it contributes no candidate pairs and this is logged.
-- [ ] GIVEN a cluster that would exceed `maxOrders`, THEN it is split rather than allowed to grow.
+- [ ] GIVEN a cluster that would exceed `maxOrders` (from that location's config), THEN it is split rather than allowed to grow.
 - [ ] GIVEN the same input run twice, THEN identical clusters are produced in identical order.
-- [ ] GIVEN 5,000 orders averaging 10 lines, WHEN clustering runs in the harness, THEN it completes within the agreed time budget with no quadratic blow-up.
+- [ ] GIVEN 5,000 orders averaging 10 lines across N locations, WHEN clustering runs in the harness, THEN it completes within the agreed time budget with no quadratic blow-up (per-location partitioning bounds the candidate set).
 
 ---
 
@@ -46,12 +51,16 @@ the ordered quantity. The WMS allocates *within* NetSuite's commitment — it do
 order gets stock. Skipping this hands one customer's promised stock to another: totals stay correct,
 attribution does not.
 
-`map` emits SKU → order. `reduce` builds candidate pairs. `summarize` runs `cluster()` and creates
-`customrecord_wms_wave_pick` records with orders, zone, ship-by, similarity score, line and unit
-counts, status Pending. Orders already on an open wave are excluded.
+`map` emits **`(location, SKU)` → order** so partitioning by location is intrinsic (D-14). `reduce`
+builds candidate pairs **within a location**. `summarize` runs `cluster()` and creates
+`customrecord_wms_wave_pick` records with **`custrecord_wave_location` set**, orders, zone, ship-by,
+similarity score, line and unit counts, status Pending. Orders already on an open wave are excluded.
+An order's fulfilling stock location determines its wave location; an order that cannot be served from
+a single location is out of scope for this release (flag, do not silently split).
 
 **Acceptance**
-- [ ] GIVEN pending sales orders sharing ≥ the configured threshold of SKUs, WHEN the pipeline runs, THEN they are grouped into a single Wave Pick record. *(FRD TC-WAV-01)*
+- [ ] GIVEN pending sales orders sharing ≥ the configured threshold of SKUs **in the same location**, WHEN the pipeline runs, THEN they are grouped into a single Wave Pick record with its `custrecord_wave_location` set. *(FRD TC-WAV-01, D-14)*
+- [ ] GIVEN two orders that share every SKU but draw from **different locations**, WHEN the pipeline runs, THEN they are placed in **separate** waves.
 - [ ] GIVEN an order already assigned to an open wave, WHEN clustering runs, THEN it is not assigned to a second wave.
 - [ ] GIVEN a sales order line with zero committed quantity, WHEN clustering runs, THEN it is excluded from every wave.
 - [ ] GIVEN a line ordered 10 and committed 4, WHEN a wave is built, THEN wave demand for that line is 4.
@@ -68,10 +77,11 @@ As a warehouse supervisor, I want to release waves to named pickers in an effici
 that clustering translates into actual walking-distance savings.
 
 **Requirement**
-Supervisor Suitelet: review Pending waves, adjust, assign a picker, release. On release, generate
-pick tasks sorted by `custrecord_wb_pick_sequence` within zone — this is what delivers the
-FRD's promised "optimise walk sequences", which nothing in the source document actually implements.
-Wave status Pending → Picking on release.
+Supervisor Suitelet: review Pending waves **for the supervisor's location (D-14)**, adjust, assign a
+picker, release. On release, generate pick tasks sorted by `custrecord_wb_pick_sequence` within zone —
+zone and pick sequence are **location-scoped** (the wave is single-location), so no cross-location walk
+path can be produced. This is what delivers the FRD's promised "optimise walk sequences", which nothing
+in the source document actually implements. Wave status Pending → Picking on release.
 
 **Acceptance**
 - [ ] GIVEN a Pending wave, WHEN a supervisor assigns a picker and releases it, THEN status becomes Picking and tasks appear on that picker's device.
@@ -115,9 +125,11 @@ As a picker, I want one consolidated instruction per SKU per bin rather than one
 that I pick 36 units in a single action instead of four.
 
 **Requirement**
-Aggregate wave demand into one task **per SKU per bin**. Because a bin holds exactly one batch, this
-is also one task per batch — which is the correct reading of Doc B §2.4 under the single-batch rule
-(F-06, closed by D-03). Allocation across bins is **FEFO**; an order may split across batches.
+Aggregate wave demand into one task **per SKU per bin**. **All candidate bins are within the wave's
+location (D-14) — the wave is single-location, so allocation never reaches across locations.** Because a
+bin holds exactly one batch, this is also one task per batch — which is the correct reading of Doc B
+§2.4 under the single-batch rule (F-06, closed by D-03). Allocation across bins is **FEFO**; an order
+may split across batches.
 
 Consequence to build for explicitly: demand for a SKU spanning three bins produces **three** tasks,
 not one. The FRD's "36 units in one action" example holds only where a single bin carries all 36.
@@ -250,12 +262,14 @@ so that the ledger never quietly diverges from what is on the shelf.
 
 **Requirement**
 Every FAILED event creates a `customrecord_wms_exception` with type, severity, source event,
-operator, bin, detected time and a human-readable description of the conflict. Severity rules
-documented. CRITICAL exceptions notify immediately; others aggregate into a supervisor digest.
-Deduplicate repeated failures of the same event into one exception with a retry count.
+operator, bin, **location (`custrecord_exc_location`, from the source event — D-14)**, detected time and
+a human-readable description of the conflict. Severity rules documented. CRITICAL exceptions notify
+immediately; others aggregate into a supervisor digest. Deduplicate repeated failures of the same event
+into one exception with a retry count.
 
 **Acceptance**
 - [ ] GIVEN a commit-time invariant violation, THEN exactly one INVARIANT_VIOLATION exception exists linked to the source event and naming the conflicting item and lot.
+- [ ] GIVEN any exception, THEN its `custrecord_exc_location` is set from the source event, so the queue can be worked by the owning warehouse. *(D-14)*
 - [ ] GIVEN one event failing three retries, THEN one exception exists with retry count 3 — not three exceptions.
 - [ ] GIVEN a CRITICAL exception, THEN the named supervisor is notified within the configured interval.
 
@@ -269,7 +283,8 @@ As a warehouse supervisor, I want to retry, reverse or manually correct a failed
 bring the system back into agreement with physical reality without a developer.
 
 **Requirement**
-Queue view filterable by type, severity, status, operator, age. Actions: **Retry** (re-drive the
+Queue view filterable by type, severity, status, operator, age **and location (D-14 — a supervisor
+works their own warehouse's queue)**. Actions: **Retry** (re-drive the
 event — safe because of the UUID guard), **Reverse** (post a compensating movement), **Manual
 adjust** (create an inventory adjustment with mandatory reason), **Write off**, **Escalate**. Every
 action is audited with user, timestamp and notes. Bulk action on selected exceptions.
@@ -381,11 +396,14 @@ Per Doc B §2.6. **Team:** total open waves / pick tasks, active replenishment r
 pending packing, on-time fulfillment %. **Individual:** pick rate (lines/hr and units/hr), pack rate
 (orders/hr), scan accuracy % (per the T-1.2 formula), current active task and assigned zone.
 **Additions justified by the review:** open exception count by severity, PENDING event backlog depth
-and oldest age, replenishment tasks blocked. Configurable refresh, default 60 s. Charts follow the
-`dataviz` skill conventions.
+and oldest age, replenishment tasks blocked. **Location filter (D-14): the dashboard is scoped to a
+selected location (metric snapshots carry `custrecord_ms_location`); a multi-location view sums the
+per-location snapshots, never the raw event table.** Configurable refresh, default 60 s. Charts follow
+the `dataviz` skill conventions.
 
 **Acceptance**
 - [ ] GIVEN active operations, WHEN the dashboard loads, THEN every metric in §2.6 renders with data no older than the configured refresh interval.
+- [ ] GIVEN a selected location, THEN every metric is filtered to that location's snapshots; a multi-location roll-up sums per-location snapshots. *(D-14)*
 - [ ] GIVEN five supervisors with the dashboard open, WHEN scan load is at peak, THEN measured concurrency consumption stays inside the T-0.2 allocation.
 - [ ] GIVEN an operator's pick rate on screen, THEN it reconciles to a manual calculation from their events for the same period.
 - [ ] GIVEN an exception backlog above threshold, THEN it is visually prominent, not buried.

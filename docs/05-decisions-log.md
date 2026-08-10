@@ -447,11 +447,30 @@ session context**, not an afterthought:
   connectivity** (a deliberate, bounded exception to offline-first: you work offline *within* a
   location, but changing location needs a connection to load the new location's master data).
 
-**Consequences (propagation pending, flagged):** location scoping touches the bin master naming
-convention (§3.3 / T-1.3 migration), the handheld login/location-select flow (T-3.4), the cache warm
-(T-3.2), wave/zone scoping (Phase 6), and genuine location-to-location Inventory Transfers (T-2.7,
-T-4.3) — which also intersects F-26 option (a). **Supersedes** the plan's implicit single-location
-assumption throughout.
+**Propagated 2026-08-09** (standalone D-14 pass). What changed:
+- **Data model (§3):** mandatory Location on scan event *(scan-time, what the committer posts against)*,
+  bin state *(denormalised `custrecord_bs_location`)*, replen profile/task, wave, exception, metric
+  snapshot; config is now global-defaults + optional per-location override rows with field-by-field
+  precedence; a "Location scoping" map names the deliberately location-agnostic records (bin policy,
+  operator identity, custody-via-wave, item cache, event registry).
+- **Bin identity:** the `<LOCATIONCODE>-<BINCODE>` prefix rationale stated; migration must fail (not
+  overwrite) two source bins that collapse to the same prefixed name (T-0.4).
+- **Cross-location movement forbidden:** new `ERR_WMS_CROSS_LOCATION_MOVE` / exception type; a transfer
+  whose source and destination resolve to different locations is rejected at ingestion (T-3.1) and
+  re-asserted at commit (T-4.3) — inter-location movement is a NetSuite Transfer Order received inbound.
+- **Login / cache / queue (T-3.2, T-3.4):** location selected at login; cache warm is location-scoped;
+  a location switch is a **full purge + re-warm, not a delta**, and **requires connectivity** (the one
+  bounded exception to offline-first, invariant #11); the durable queue is **not** purged on switch and
+  events keep their scan-time location (T-12.5 test).
+- **Waves/zones/replen (Phase 6):** clustering **partitions by location before Jaccard** (correctness
+  *and* a candidate-set reduction), replen source/target within one location, zone & pick sequence
+  location-scoped, cart capacity per-location config.
+- **Committer (AD-18):** inbound-before-outbound holds **within each location**; the global two-phase
+  cycle already satisfies it — **do not shard the committer per location.**
+- **Assumption logged:** one operator holds **one location per session** (register Q-31), pending
+  confirmation.
+
+**Supersedes** the plan's implicit single-location assumption throughout.
 
 ## D-15 — Delivery is an Account Customization Project, not a SuiteApp · *accepted*
 

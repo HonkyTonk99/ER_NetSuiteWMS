@@ -319,7 +319,9 @@ happy-path demo. Automate (headless browser / device lab) at least:
 - **Durable-queue survival** — events queued offline survive **app kill and battery pull** (IndexedDB
   + `navigator.storage.persist()`, D-13); on relaunch the queue is intact and drains.
 - **Cache warm-up on location select** — switching location warms the new location's master-data
-  cache and requires connectivity (D-14); operating offline *within* a location works.
+  cache and requires connectivity (D-14); operating offline *within* a location works. **The queue is
+  not purged on switch, and an event scanned offline in location A then synced after switching to
+  location B must post to A** — the production-only bug D-14 calls out explicitly.
 - **Sync-on-reconnect** — a device back from N minutes offline drains via the **batch endpoint** in few
   round-trips, exactly once, no duplicates, honouring 429 backoff (T-3.2).
 - **Reconnect conflict handling** — offline events invalid on arrival route to the exception queue,
@@ -330,7 +332,8 @@ happy-path demo. Automate (headless browser / device lab) at least:
 **Acceptance**
 - [ ] GIVEN the radio off for a full pick run, THEN every task completes and no scan blocks on the server (automated).
 - [ ] GIVEN the app is killed / battery pulled with a non-empty queue, WHEN it relaunches, THEN the queue is intact and drains exactly once with no duplicates.
-- [ ] GIVEN a location switch with no connectivity, THEN the operator is warned/blocked per policy; with connectivity, the new cache warms.
+- [ ] GIVEN a location switch with no connectivity, THEN the operator is warned/blocked per policy; with connectivity, the new cache fully purges and re-warms (not a delta).
+- [ ] GIVEN an event scanned offline in **location A**, and the operator then switches to **location B** before the queue drains, WHEN it syncs, THEN the event posts to **A** (its scan-time location), not B — the queue was not purged by the switch. *(D-14)*
 - [ ] GIVEN offline events that conflict on reconnect, THEN they raise exceptions rather than posting.
 - [ ] GIVEN the suite, THEN it runs in CI (headless) and blocks merge on failure.
 

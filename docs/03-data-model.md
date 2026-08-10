@@ -3,6 +3,30 @@
 Merges the schemas from Doc A §3 and Doc B §4, plus additions required by the review findings.
 **Bold** rows are additions or changes to what the FRD specified.
 
+## Location scoping (D-14)
+
+The WMS is **multi-location from day one.** Every record that describes physical stock, physical work,
+or an operator action **carries a mandatory Location** and every operational query filters by it:
+
+| Record | Location field |
+|---|---|
+| `customrecord_wms_bin` (§3.3) | `custrecord_wb_location` |
+| `customrecord_wms_bin_state` (§3.2b) | `custrecord_bs_location` *(denormalised from the bin)* |
+| `customrecord_wms_scan_event` (§3.1) | `custrecord_se_location` *(captured at scan time; what the committer posts against)* |
+| `customrecord_wms_replen_profile` / `_task` (§3.4/§3.5) | `custrecord_replen_location` / `custrecord_rt_location` |
+| `customrecord_wms_wave_pick` (§3.6) | `custrecord_wave_location` *(a wave never spans locations)* |
+| `customrecord_wms_exception` (§3.8) | `custrecord_exc_location` |
+| `customrecord_wms_metric_snapshot` (§3.9) | `custrecord_ms_location` |
+| `customrecord_wms_config` (§3.10) | global row + optional `custrecord_cfg_location` override |
+
+**Deliberately location-agnostic — do not add a location:**
+- `customrecord_wms_bin_policy` (§3.9b) — policy is a rule *by bin type*, identical in every warehouse.
+- `customrecord_wms_operator` (§3.11) — operator *identity*; the location is a **per-session selection**
+  (T-3.4), not a property of the person.
+- `customrecord_wms_custody_log` (§3.7) — location is inherited from its wave (which is location-scoped).
+- The **item cache** (AD-02, `WMS_ITEM_*`) and the **event-handler registry** (AD-15) — item tracking
+  mode and handler descriptors are global.
+
 ---
 
 ## 3.1 `customrecord_wms_scan_event` — append-only event log
@@ -22,7 +46,7 @@ Merges the schemas from Doc A §3 and Doc B §4, plus additions required by the 
 | `custrecord_se_qty` | Decimal | |
 | `custrecord_se_status` | List/Record | PENDING, PROCESSING, POSTED, FAILED, **SUPERSEDED, DEFERRED** *(D-11 — deferred is legitimate work in the wrong sequence; failed needs a human. Do not merge them)* |
 | `custrecord_se_error_log` | Long Text | |
-| **`custrecord_se_location`** | List/Record → Location | Required for M/R grouping (F-13) |
+| **`custrecord_se_location`** | List/Record → Location | **Mandatory.** Captured at **scan time from the operator's session** and stored on the event; it is **what the committer posts against.** It is **NOT** resolved at commit time and **NOT** read from the operator's currently-selected location at posting. *An event scanned offline in location A and synced while the operator stands in location B posts to A* (D-14, T-12.5 test). Also required for M/R grouping (F-13) |
 | **`custrecord_se_order_line_key`** | Free-Form Text | SO line unique key — enables correct aggregation (F-14) |
 | **`custrecord_se_device_id`** | Free-Form Text | Traceability + device fleet diagnostics |
 | **`custrecord_se_client_ts`** | Date/Time | Time of scan on device (differs from server receipt when offline) |
@@ -59,6 +83,7 @@ One row per bin. Viable as a single tiny record precisely because of the 1-SKU/1
 | Field | Type | Notes |
 |---|---|---|
 | `custrecord_bs_bin` | List/Record → `customrecord_wms_bin` | One state row per bin. **`externalid` = the bin identifier makes this platform-UNIQUE (D-12)** — a second state row for a bin cannot be created. The module still upserts by bin (read-then-write on the single settlement queue) |
+| **`custrecord_bs_location`** | List/Record → Location | **New (D-14). Mandatory. Denormalised from the bin at create, never mutated.** Every operational query filters by location; a joined lookup through the bin on this hot record would violate invariant #1's spirit (a second read on the hottest path). **Do not "normalise" this away** — it is denormalised deliberately |
 | `custrecord_bs_item` | List/Record → Item | Current SKU, empty when bin is empty |
 | `custrecord_bs_lot` | Free-Form Text | Current batch, empty when bin is empty |
 | `custrecord_bs_qty` | Decimal | Current physical quantity |
@@ -107,23 +132,31 @@ this section was a leftover from before that ruling. The WMS owns the bin master
 > `custrecord_wms_bin_*` fields (type, policy, zone, pick_sequence, blocked) are re-homed onto this
 > record with the `custrecord_wb_*` prefix.
 
+> **Why the location-code prefix on `name` (D-14).** The WMS is multi-location, and **bin codes may
+> legitimately repeat between warehouses** (both `WH1` and `WH2` can have an `A-01-03`). The
+> `<LOCATIONCODE>-<BINCODE>` prefix is what keeps `externalid` globally unique across locations — it is
+> not cosmetic. Migration must enforce it: **two source bins that collapse to the same prefixed name
+> fail the import, not overwrite** (T-0.4).
+
 ## 3.4 `customrecord_wms_replen_profile`
 
 Implied by Doc B §2.2 but never defined as a record. Explicit here.
 
 | Field | Type |
 |---|---|
+| **`custrecord_replen_location`** | List/Record → Location — **new (D-14), mandatory.** Source and target bins are both within this location; replenishment never crosses locations |
 | `custrecord_replen_unit_bin` | List/Record → `customrecord_wms_bin` |
 | `custrecord_replen_item` | List/Record → Item |
 | `custrecord_replen_trigger_qty` | Decimal |
 | `custrecord_replen_optimum_qty` | Decimal |
-| `custrecord_replen_bulk_zone` | List/Record |
+| `custrecord_replen_bulk_zone` | List/Record — zone name is location-scoped (may repeat across locations) |
 | `custrecord_replen_active` | Checkbox |
 
 ## 3.5 `customrecord_wms_replen_task`
 
 | Field | Type |
 |---|---|
+| **`custrecord_rt_location`** | List/Record → Location — **new (D-14), mandatory.** `_source_bin` and `_target_bin` must both resolve to this location |
 | `custrecord_rt_item` / `_source_bin` / `_target_bin` / `_lot` / `_qty` | as named; `_source_bin` and `_target_bin` are `List/Record → customrecord_wms_bin` |
 | `custrecord_rt_status` | OPEN, ASSIGNED, IN_PROGRESS, COMPLETE, CANCELLED, **BLOCKED** |
 | `custrecord_rt_priority` | Integer |
@@ -135,12 +168,13 @@ Implied by Doc B §2.2 but never defined as a record. Explicit here.
 | Field | Type | Notes |
 |---|---|---|
 | `name` | Text | e.g. WAVE-1001 |
+| **`custrecord_wave_location`** | List/Record → Location | **New (D-14), mandatory. A wave never spans locations** — clustering partitions by location before scoring (AD-10 / T-6.1). All its orders, bins and the stage bin are in this location |
 | `custrecord_wave_orders` | Long Text | JSON array of order IDs |
 | `custrecord_wave_assigned_picker` | List/Record → Employee | |
 | `custrecord_wave_assigned_packer` | List/Record → Employee | |
-| `custrecord_wave_stage_location` | List/Record → `customrecord_wms_bin` | |
+| `custrecord_wave_stage_location` | List/Record → `customrecord_wms_bin` | Stage bin (in `custrecord_wave_location`) |
 | `custrecord_wave_status` | List/Record | Pending, Picking, **Staged_For_Packing**, Packing, Complete, **Cancelled, Exception** |
-| **`custrecord_wave_zone`** | List/Record | |
+| **`custrecord_wave_zone`** | List/Record | Zone name is **location-scoped** — may repeat across locations |
 | **`custrecord_wave_ship_by`** | Date | Clustering constraint |
 | **`custrecord_wave_similarity_score`** | Decimal | Audit of why these orders grouped |
 | **`custrecord_wave_line_count`** / **`_unit_count`** | Integer | Cart-capacity constraint |
@@ -157,12 +191,16 @@ Implied by Doc B §2.2 but never defined as a record. Explicit here.
 | **`custrecord_custody_tote_id`** | Free-Form Text |
 | **`custrecord_custody_reject_reason`** | Free-Form Text |
 
+> **Location:** inherited from `custrecord_custody_wave` (waves are location-scoped, §3.6) and the
+> stage bin — no own field needed (D-14).
+
 ## 3.8 `customrecord_wms_exception` — **new (AD-11)**
 
 | Field | Type |
 |---|---|
 | `custrecord_exc_source_event` | List/Record → Scan Event |
-| `custrecord_exc_type` | INVARIANT_VIOLATION, POST_FAILURE, SHORT_PICK, OVER_PICK, RECONCILIATION_DRIFT, REPLEN_BLOCKED, **UNATTRIBUTED_MOVEMENT, OVER_RECEIPT, RECEIPT_DISCREPANCY, NO_PUTAWAY_LOCATION, MISSING_LOT_DATA, SERIALISED_ITEM_OUT_OF_SCOPE, PO_LINE_MISMATCH, CLOSED_PERIOD_POSTING, COMMITMENT_EXCEEDED, DEFERRAL_TIMEOUT, NEGATIVE_BIN_STATE** *(LOCK_TIMEOUT, STALE_LOCK removed — locks withdrawn, D-12)* |
+| **`custrecord_exc_location`** | List/Record → Location — **new (D-14), mandatory.** So the exception queue can be filtered and worked by the warehouse that owns it |
+| `custrecord_exc_type` | INVARIANT_VIOLATION, POST_FAILURE, SHORT_PICK, OVER_PICK, RECONCILIATION_DRIFT, REPLEN_BLOCKED, **UNATTRIBUTED_MOVEMENT, OVER_RECEIPT, RECEIPT_DISCREPANCY, NO_PUTAWAY_LOCATION, MISSING_LOT_DATA, SERIALISED_ITEM_OUT_OF_SCOPE, PO_LINE_MISMATCH, CLOSED_PERIOD_POSTING, COMMITMENT_EXCEEDED, DEFERRAL_TIMEOUT, NEGATIVE_BIN_STATE, CROSS_LOCATION_MOVE** *(LOCK_TIMEOUT, STALE_LOCK removed — locks withdrawn, D-12)* |
 | `custrecord_exc_severity` | LOW, MEDIUM, HIGH, CRITICAL |
 | `custrecord_exc_status` | OPEN, IN_PROGRESS, RESOLVED, WRITTEN_OFF |
 | `custrecord_exc_assigned_to` | List/Record → Employee |
@@ -174,6 +212,7 @@ Implied by Doc B §2.2 but never defined as a record. Explicit here.
 
 | Field | Type |
 |---|---|
+| **`custrecord_ms_location`** | List/Record → Location — **new (D-14), mandatory.** Metrics are location-scoped so a dashboard can show one warehouse |
 | `custrecord_ms_interval_start` / `_interval_end` | Date/Time |
 | `custrecord_ms_operator` | List/Record → Employee (blank = team-level row) |
 | `custrecord_ms_lines_picked` / `_units_picked` / `_orders_packed` | Integer |
@@ -194,12 +233,23 @@ Implied by Doc B §2.2 but never defined as a record. Explicit here.
 
 Seeded per the AD-14 table. Changing the bulk-bin rule later is an edit here, not a code change.
 
-## 3.10 `customrecord_wms_config` — **new**
+> **Location-agnostic (D-14):** a policy is a rule *by bin type*, identical in every warehouse — no
+> location field. (If one warehouse ever needs a different rule, that is a per-location *config*
+> override (§3.10), not a per-location policy record.)
 
-Single-row settings record. Ends the F-16 threshold ambiguity and removes every magic number from
-code: similarity threshold, max cluster size, cart tote capacity, SKU fan-out cap, M/R batch size,
-event retention days, replenishment scan interval, ingestion advisory-check toggle, dashboard refresh
-seconds, session-token TTL, rate-limit thresholds. *(`lock TTL seconds` removed — locks withdrawn, D-12.)*
+## 3.10 `customrecord_wms_config` — **new** *(global defaults + optional per-location override, D-14)*
+
+Settings record removing every magic number from code: similarity threshold, max cluster size, cart
+tote capacity, SKU fan-out cap, M/R batch size, event retention days, replenishment scan interval,
+ingestion advisory-check toggle, dashboard refresh seconds, session-token TTL, rate-limit thresholds.
+*(`lock TTL seconds` removed — locks withdrawn, D-12.)*
+
+**Not a single global row (D-14).** There is a **global-defaults row** plus **optional per-location
+override rows** (`custrecord_cfg_location` — blank on the global row, set on an override). **Precedence:
+the location row wins field-by-field; a value absent on the location row inherits the global default.**
+`getConfig(locationId)` in `wms_lib_config.js` (T-2.5) resolves this — never expose config as
+global-only, or per-location cart capacity and thresholds (which genuinely differ between warehouses)
+become impossible without a code change.
 
 ## 3.11 `customrecord_wms_operator` — **new (D-19)**
 
@@ -214,6 +264,7 @@ this record; identity flows into `custrecord_se_operator` (→ Employee).
 | `custrecord_op_pin_hash` | Free-Form Text | **Hashed** PIN (salted). **Never plaintext** (T-3.3) |
 | `custrecord_op_active` | Checkbox | Deactivating cuts the operator off; every API call checks it |
 | `custrecord_op_role` | List/Record | Picker / Packer / Supervisor — drives on-device capability |
+| `custrecord_op_allowed_locations` | Multi-select → Location | **New (D-14).** Which locations this operator may select at login. **Location is a per-session selection, not a property of the operator** — the record itself is location-agnostic (§ Location scoping) |
 
 > The PIN hash and the HMAC session-token secret (a script parameter) are the two secrets in the
 > system. Neither is ever returned to the browser. See T-3.3 and F-27.

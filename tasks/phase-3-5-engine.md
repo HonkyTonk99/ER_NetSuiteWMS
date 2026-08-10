@@ -19,8 +19,16 @@ a Suitelet, D-13, so its API is a sibling Suitelet, same origin). POST accepting
 eventType, operatorId, waveId, orderId, orderLineKey, skuCode, batchNumber, sourceBinId, targetBinId,
 qty, locationId, deviceId, clientTs) plus the **HMAC session token** (T-3.3). Flow: validate token
 (T-3.3) → schema validation → resolve item/bin metadata from cache → read bin state projection (T-2.3)
-→ apply bin policy (T-2.3b) → `writeScanEvent` (sets `externalid` = UUID) → update projection → return.
+→ apply bin policy (T-2.3b) → **cross-location check (D-14)** → `writeScanEvent` (sets `externalid` = UUID,
+and `custrecord_se_location` = the **session location**) → update projection → return.
 **No saved search on the success path. No `record.transform`. No inventory posting. No lock.**
+
+**Cross-location movement is forbidden (D-14).** For any move event (BIN_TRANSFER / REPLEN_MOVE /
+PUTAWAY), if the source and target bins resolve to **different locations**, reject with
+`ERR_WMS_CROSS_LOCATION_MOVE`, create **no** event, mutate **no** bin state on either side, and raise a
+`CROSS_LOCATION_MOVE` exception. Inter-location movement is a NetSuite Transfer Order received through
+the inbound path at the destination — never a WMS bin transfer. The event's location comes from the
+operator's session, from the cache; it is not trusted from the payload alone.
 **Idempotency (AD-04):** a duplicate UUID fails at the platform on `externalid` and returns
 `idempotent:true` — plus the committer dedupe safety net. Structured JSON responses for success,
 idempotent-duplicate, auth failure, validation failure and platform error, each with a machine-readable
@@ -31,6 +39,7 @@ the client can drain its queue in fewer round-trips — a direct mitigation for 
 - [ ] GIVEN a valid scan payload with a valid session token, WHEN posted, THEN a PENDING scan event is created and a success response returns; measured server time P95 < 600 ms and P99 < 1200 ms under the Phase 12 load profile.
 - [ ] GIVEN the PWA and the API are both Suitelets, WHEN the browser POSTs, THEN the call is **same-origin** (no CORS preflight).
 - [ ] GIVEN a payload violating bin isolation, WHEN posted, THEN no event is created and the response carries `ERR_WMS_BIN_CONSTRAINT_VIOLATION` with the conflicting item and lot in the message.
+- [ ] GIVEN a transfer event whose source and target bins resolve to **different locations**, WHEN posted, THEN it is rejected with `ERR_WMS_CROSS_LOCATION_MOVE`, **no event is created, and bin state is mutated on neither side**; a `CROSS_LOCATION_MOVE` exception is raised. *(D-14)*
 - [ ] GIVEN a duplicate UUID, WHEN posted, THEN the create fails at the platform on `externalid` and the response is `SUCCESS` with `idempotent:true` — exactly one row exists.
 - [ ] GIVEN a batch of 20 events, WHEN posted in one request, THEN each is processed independently and the response contains a per-event result array.
 - [ ] GIVEN a request with a missing or invalid session token, WHEN posted, THEN it is rejected (see T-3.3) and no event is created.
@@ -48,15 +57,25 @@ through a dead spot instead of standing still waiting for a bar of signal.
 **Requirement**
 Per D-04, connection loss is the **expected** state, not the exception.
 
-*Local cache:* on sync, the device pulls the resolved data needed to validate every scan the
-operator could plausibly make this shift — assigned tasks, and the item, bin, lot and bin-policy
-subsets they reference. Resolved and pushed by the server, not fetched on demand. A scan that cannot
-be validated locally is a design failure, not a runtime condition. Cache carries a staleness limit
-and a sync token.
+*Local cache — scoped to the selected location (D-14):* on sync, the device pulls the resolved data
+needed to validate every scan the operator could plausibly make this shift **in the selected
+location** — assigned tasks, and the item, and the **bin, bin-policy, zone, pick-sequence and open-work
+subsets for that location**. Resolved and pushed by the server, not fetched on demand. A scan that
+cannot be validated locally is a design failure, not a runtime condition. Cache carries a staleness
+limit and a sync token.
 
-*Outbound queue:* durable, FIFO, survives app kill and battery pull. UUID stamped at creation, never
-regenerated on retry. Exponential backoff with jitter. HTTP 429 / `SSS_REQUEST_LIMIT_EXCEEDED`
-treated as a normal throttle signal — back off, continue, never drop.
+*Location switch (D-14):* selecting a different location is a **full purge and re-warm of the cache,
+not a delta** — the new location's master data is loaded fresh. **A switch therefore requires
+connectivity** — this is *the one bounded exception to offline-first* (invariant #11): you work offline
+*within* a location, but you cannot switch locations with the radio off. Assume **one location per
+session** (register Q-31); switching is an explicit action, not implicit.
+
+*Outbound queue — not purged on location switch (D-14):* durable, FIFO, survives app kill and battery
+pull. UUID stamped at creation, never regenerated on retry. **Queued events keep the location they were
+scanned under** — an event scanned offline in location A and synced while the operator has since
+switched to location B still posts to **A** (T-3.1 stamps `custrecord_se_location` at scan time). The
+queue is **never** purged on a location switch. Exponential backoff with jitter. HTTP 429 /
+`SSS_REQUEST_LIMIT_EXCEEDED` treated as a normal throttle signal — back off, continue, never drop.
 
 *Batch drain:* reconnection sends through the batch endpoint in few round-trips. A device back from
 40 minutes offline must **not** emit 200 individual requests into the concurrency budget.
@@ -71,6 +90,8 @@ staleness limits, with a supervisor-visible reason.
 - [ ] GIVEN the server returns 429 for 30 s, WHEN the client drains, THEN it backs off with jitter and all events post exactly once.
 - [ ] GIVEN the local cache exceeds its staleness limit, THEN the operator is warned and, past the hard limit, blocked with a supervisor-visible reason.
 - [ ] GIVEN queue depth exceeds the configured limit, THEN the operator is blocked with a clear message visible to a supervisor.
+- [ ] GIVEN the operator switches location, THEN the cache is fully purged and re-warmed for the new location (not a delta), and the switch requires connectivity — offline, the switch is blocked. *(D-14)*
+- [ ] GIVEN an event queued offline in location A and a subsequent switch to location B, WHEN the queue drains, THEN the event posts to **A** and the queue is not purged by the switch. *(D-14)*
 
 ---
 
@@ -150,8 +171,13 @@ As a picker, I want a scanner app that shows me my next task and confirms each s
 that I can work at scan-every-2-seconds pace without waiting on the system.
 
 **Requirement**
-Screens: login/shift start, task list, directed pick (bin → SKU → lot → qty), replenishment move,
-bin transfer, putaway, short pick, stage/handoff.
+Screens: login/shift start **(includes location select, D-14)**, task list, directed pick (bin → SKU →
+lot → qty), replenishment move, bin transfer, putaway, short pick, stage/handoff.
+**Location select at login (D-14):** the operator picks one of their allowed locations
+(`custrecord_op_allowed_locations`); it becomes the mandatory session context stamped onto every scan
+(T-3.1) and scopes the cache warm (T-3.2). **One location per session** (Q-31); switching is an explicit
+action that triggers a full purge + re-warm and needs connectivity. A visible indicator shows the
+current location at all times.
  Local validation against a cached task list so
 success renders in < 150 ms. Barcode symbologies and scan-to-field mapping defined per screen.
 Explicit sad paths: wrong bin scanned, wrong SKU, wrong lot, insufficient quantity, unknown barcode.
@@ -163,7 +189,9 @@ experience is governed by this budget and nothing else in the plan constrains it
 target device, not a developer laptop:
 - **JS/CSS bundle ≤ 500 KB gzipped** (app shell); assets lazy-loaded beyond that.
 - **Cold first load (empty cache) to interactive ≤ 3 s** over representative warehouse Wi-Fi.
-- **Login → cache warmed → first task actionable ≤ 10 s** (includes the D-14 location cache warm).
+- **Login → cache warmed → first task actionable ≤ 10 s** — this is the **per-location** warm (D-14),
+  and a **location switch re-incurs it** (full purge + re-warm, not a delta). Budget applies to the
+  largest in-scope location's data volume.
 - **Warm load (service-worker cached shell) ≤ 1 s.**
 These are the agreed ceilings; regressions past them fail the build (measured in T-12.5).
 
@@ -248,7 +276,10 @@ transfers do not fail on location mismatch or silently combine stock from differ
 Set `location` from `custrecord_se_location` — **never** from a bin internal ID. Group by
 `(locationId, sourceBinId)` so every transfer is constructible. This work runs on the **single
 bin-affecting settlement queue (T-4.1), so no locks are needed** (AD-05 withdrawn, D-12) — one thread
-means no interleaving. Re-check the target bin's policy against the projection, then reconcile the
+means no interleaving. **Re-assert the cross-location invariant (D-14): if a move's source and target
+bins resolve to different locations, do not post — raise a `CROSS_LOCATION_MOVE` exception** (ingestion
+should already have blocked it at T-3.1, but the committer re-checks like every other invariant, F-03).
+Re-check the target bin's policy against the projection, then reconcile the
 projection after posting. **Bin-to-bin moves post nothing to NetSuite, ever** —
 NetSuite has no concept of a bin (D-07) and the stock has not changed location, so there is no
 financial event. The commit updates WMS bin state only. `inventoryadjustment` is used solely for
@@ -262,8 +293,8 @@ release 2, Q-05.)* Like any bin move it posts nothing to NetSuite; the only effe
 now sits in a bin with `availableForFulfilment: false`.
 
 **Acceptance**
-- [ ] GIVEN move events across two locations, WHEN the M/R runs, THEN separate Bin Transfers are created per location and each saves successfully.
-- [ ] GIVEN a bin transfer, WHEN inspected, THEN the `location` field holds a Location internal ID.
+- [ ] GIVEN move events in two different locations (each move within its own location), WHEN the M/R runs, THEN each settles in WMS bin state under its own location and **no NetSuite transaction is created** (bin moves post nothing, D-07) — corrects a pre-D-07 acceptance that expected a "Bin Transfer" record.
+- [ ] GIVEN a **cross-location** move event that reached commit, WHEN the committer re-asserts (D-14), THEN it is **not posted**, bin state is mutated on neither side, and a `CROSS_LOCATION_MOVE` exception is raised.
 - [ ] GIVEN any move event, WHEN it commits, THEN the WMS projection updates, **no NetSuite transaction is created**, and the event is marked POSTED rather than FAILED.
 - [ ] GIVEN a bin transfer targeting a non-fulfillable bin type (RETURN/QUALITY/DEFECT), THEN the transfer **succeeds** and the moved stock is thereafter **excluded from allocation (T-7.1) and replenishment sourcing (T-5.2)**.
 - [ ] GIVEN a target bin whose contents changed after ingestion, WHEN commit re-asserts the invariant, THEN the transfer is rejected and an INVARIANT_VIOLATION exception is raised naming the conflict.
@@ -363,9 +394,10 @@ mid-wave.
 **Requirement**
 Scan active replenishment profiles; compare available qty in each UNIT bin against
 `custrecord_replen_trigger_qty`. Where below, create a `customrecord_wms_replen_task` for
-`optimum_qty − current_qty`. **Suppress duplicates** — do not raise a second task for a bin with an
-OPEN or IN_PROGRESS task. Priority rises as the deficit approaches zero and when the SKU appears in
-a wave that is currently releasable.
+`optimum_qty − current_qty`, **stamping `custrecord_rt_location` from the profile (D-14) — source and
+target bins are both within that one location; replenishment never crosses locations.** **Suppress
+duplicates** — do not raise a second task for a bin with an OPEN or IN_PROGRESS task. Priority rises as
+the deficit approaches zero and when the SKU appears in a wave that is currently releasable.
 
 **Acceptance**
 - [ ] GIVEN a UNIT bin below its trigger, WHEN the monitor runs, THEN exactly one OPEN replenishment task is created for the correct top-up quantity. *(FRD TC-REP-01)*
@@ -396,7 +428,9 @@ Per D-03, source selection is:
    `allowDirectPick`), batch by batch in FEFO order. When those are exhausted the SKU is out of
    stock — a normal inventory state, not an exception.
 
-Exclude blocked bins. Never select a source that would violate the target bin's policy on arrival.
+Exclude blocked bins. **All candidate source bins are within the UNIT bin's location (D-14) — never
+source across locations; that stock is an inbound Transfer Order, not a replenishment.** Never select a
+source that would violate the target bin's policy on arrival.
 **Never source from a non-fulfillable bin** (`availableForFulfilment: false` — QUALITY, RETURN,
 DEFECT, STAGE, RECEIVING): that stock is physically present but not pickable until it is physically
 moved into a UNIT/BULK bin (Q-16). `allowDirectPick` already excludes these from the step-3
@@ -597,7 +631,9 @@ minutes.
 
 **Requirement**
 Before posting any outbound transaction, check NetSuite has sufficient quantity at that location for
-that item and lot. Where it does not:
+that item and lot. **The sufficiency test, `DEFERRED` retry and negative-bin evaluation are all per
+`(item, location)` (D-14)** — NetSuite quantity on hand is per location, so a shortfall in one location
+must not defer an event in another. Where it does not:
 
 - Set the event to **`DEFERRED`** — a **new status, distinct from `FAILED`**. Deferred means
   *legitimate work in the wrong sequence, will succeed once its receipt lands*. Failed means *will

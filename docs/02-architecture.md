@@ -446,6 +446,13 @@ cycle N:
                   → after N cycles → exception
 ```
 
+**Multi-location (D-14): the ordering guarantee is per location, and the global two-phase cycle already
+delivers it.** Because Phase A drains *all* inbound (across every location) before Phase B posts *any*
+outbound, inbound-before-outbound holds within each location for free. **Do not shard the committer
+into a per-location queue** to "parallelise" — that would let location B's outbound post before
+location A's inbound drains and quietly break the guarantee for cross-cutting cycles. `DEFERRED` retry
+and negative-bin handling are evaluated per `(item, location)`, since NetSuite quantity is per location.
+
 **`DEFERRED` is a distinct status from `FAILED`, and the distinction matters.** A deferred event is
 legitimate work in the wrong sequence — it will succeed once its receipt lands. A failed event is
 work that will never succeed without human intervention. Collapsing the two would fill the
