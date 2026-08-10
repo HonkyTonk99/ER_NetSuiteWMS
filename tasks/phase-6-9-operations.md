@@ -8,8 +8,11 @@
 **Depends on:** T-2.5 · **Resolves:** F-10, F-16 · **Implements:** AD-10
 
 > **Carved out of the T-0.3 gate — buildable now (D-23, 2026-08-10).** Pure logic, no SuiteScript
-> dependency. Conditions of the carve-out: the module imports **no `N/` module** (not even `N/error`
-> — signal failure with a plain thrown `Error`; CI-enforced by `guard-carveout-imports.js`); **unit
+> dependency. Conditions of the carve-out: the module imports **no `N/` module** (not even `N/error`;
+> CI-enforced by `guard-carveout-imports.js`). **Error shape (D-23):** clustering has no per-item
+> business "rejection" — it **returns** clusters (and may return a diagnostic on a SKU skipped past the
+> fan-out cap); a **programmer error** (malformed order input) throws a plain `Error` with `err.name`
+> set to an `ERR_WMS_*` value, matching the `N/error` shape with no translation layer. **Unit
 > tests of the acceptance criteria below are the deliverable, not an extra**; **no hard-coded tuning**
 > — `threshold`, `maxOrders`, `maxLines`, `maxUnits`, cart capacity all arrive as parameters (invariant
 > #9); **transaction type is opaque** (state it in the module header — clustering never branches on

@@ -425,11 +425,15 @@ the next putaway of any SKU is accepted.
 
 > **Carved out of the T-0.3 gate — buildable now (D-23, 2026-08-10).** Pure function of
 > `(policy, currentState, proposedItem, proposedLot)`. Conditions: imports **no `N/` module** (not even
-> `N/error` — throw a plain `Error`; CI-enforced by `guard-carveout-imports.js`); **unit tests of the
-> acceptance criteria below are the deliverable**; **no hard-coded tuning** (invariant #9) — the policy
-> object is passed in, never read from config inside the module. The **caller** (the not-yet-built
-> validation entry point) loads the bin policy and projection from cache and hands them in; **do not
-> write that caller here.**
+> `N/error`; CI-enforced by `guard-carveout-imports.js`); **unit tests of the acceptance criteria below
+> are the deliverable**; **no hard-coded tuning** (invariant #9) — the policy object is passed in, never
+> read from config inside the module. The **caller** (the not-yet-built validation entry point) loads
+> the bin policy and projection from cache and hands them in; **do not write that caller here.**
+> **Error shape (D-23):** a bin rejection is a **normal outcome, not an exception** — `check(...)`
+> **returns a structured verdict** `{ allowed, reasonCode }` (e.g. `WMS_BIN_CONSTRAINT_VIOLATION`,
+> `WMS_BIN_NEGATIVE_STATE`, `WMS_BIN_BLOCKED`), never throws for it. Only a **programmer error** (bad
+> argument, impossible state) throws — a plain `Error` with `err.name` set to `ERR_WMS_INVALID_ARGUMENT`.
+> The ingestion Suitelet (T-3.1) maps a `{allowed:false}` verdict to its `ERR_WMS_*` response code.
 
 **Narrative**
 As a warehouse operator, I want bin rules enforced according to what kind of bin it is, so that pick
@@ -437,25 +441,31 @@ faces stay single-SKU while staging areas can hold a mixed tote — which is the
 staging area.
 
 **Requirement**
-`check(binId, itemId, lotNumber)` loads the bin's policy (AD-14 table) from cache and applies it
-against the projection from T-2.3. **One code path for all bin types** — no `if (binType === 'UNIT'
-|| binType === 'BULK')` anywhere in the codebase. Throws
-`ERR_WMS_BIN_CONSTRAINT_VIOLATION` naming the bin, conflicting item and conflicting lot. An **empty
-bin always passes — and "empty" means `custrecord_bs_item` is cleared, never a `qty` comparison**
-(invariant #20; a Decimal float compare is fragile and a negative bin with an item set is *occupied*).
-`custrecord_wb_blocked` fails with a distinct code. Policy is a pure function of
-`(policy, currentState, proposedItem, proposedLot)` — fully unit-testable with no NetSuite account.
+The pure core is `check(policy, currentState, proposedItem, proposedLot)` — the **caller** resolves the
+bin's policy (AD-14 table) and projection (T-2.3) from cache and hands them in (D-23; the pure module
+reads no cache and imports no `N/` module). **One code path for all bin types** — no `if (binType ===
+'UNIT' || binType === 'BULK')` anywhere in the codebase. **`check` returns a structured verdict, it does
+not throw for a business rejection (D-23):** `{ allowed: false, reasonCode: 'WMS_BIN_CONSTRAINT_VIOLATION',
+conflictItem, conflictLot }` when a rule is violated, `{ allowed: false, reasonCode: 'WMS_BIN_NEGATIVE_STATE' }`
+for a negative-and-different-SKU bin, `{ allowed: false, reasonCode: 'WMS_BIN_BLOCKED' }` when
+`custrecord_wb_blocked`, and `{ allowed: true }` otherwise. An **empty bin always returns `allowed:true`
+— and "empty" means `custrecord_bs_item` is cleared, never a `qty` comparison** (invariant #20; a Decimal
+float compare is fragile and a negative bin with an item set is *occupied*). A **programmer error** (e.g.
+a missing policy argument) throws a plain `Error` with `err.name = 'ERR_WMS_INVALID_ARGUMENT'`. Fully
+unit-testable with no NetSuite account; the ingestion Suitelet (T-3.1) maps a `{allowed:false}` verdict
+onto its `ERR_WMS_*` response code.
 
 **Acceptance**
-- [ ] GIVEN a UNIT bin holding item ABC, WHEN putaway of item XYZ is checked, THEN `ERR_WMS_BIN_CONSTRAINT_VIOLATION` is thrown naming ABC. *(FRD TC-BIN-01)*
-- [ ] GIVEN a BULK bin holding BATCH-001 of item ABC, WHEN putaway of BATCH-002 of the same item is checked, THEN it is blocked. *(FRD TC-BIN-02)*
-- [ ] GIVEN a **STAGE** bin already holding three SKUs, WHEN a fourth SKU is added during wave handoff, THEN it is **accepted** — resolving the §2.1 / §2.5 contradiction in F-18.
-- [ ] GIVEN the BULK policy is changed to `singleBatch: false` in configuration, WHEN a mixed-batch putaway is retried, THEN it succeeds **with no code deployment**.
-- [ ] GIVEN a bin with **negative** quantity, WHEN a different SKU is validated, THEN it is rejected with `ERR_WMS_BIN_NEGATIVE_STATE` — the bin is treated as occupied, not empty.
-- [ ] GIVEN a bin with negative quantity, WHEN the **same** SKU and lot are validated, THEN it passes so corrective putaway is possible.
-- [ ] GIVEN a bin whose item is set but `qty` is a tiny fractional residue (e.g. `0.0000001`), WHEN a different SKU is validated, THEN it is **rejected** — emptiness is decided by `custrecord_bs_item` being cleared, not by `qty` (invariant #20).
+- [ ] GIVEN a UNIT bin holding item ABC, WHEN putaway of item XYZ is checked, THEN the verdict is `{ allowed:false, reasonCode:'WMS_BIN_CONSTRAINT_VIOLATION', conflictItem:'ABC' }` — a returned verdict, not a throw. *(FRD TC-BIN-01; D-23 error shape)*
+- [ ] GIVEN a BULK bin holding BATCH-001 of item ABC, WHEN putaway of BATCH-002 of the same item is checked, THEN the verdict is `{ allowed:false, reasonCode:'WMS_BIN_CONSTRAINT_VIOLATION' }`. *(FRD TC-BIN-02)*
+- [ ] GIVEN a **STAGE** bin already holding three SKUs, WHEN a fourth SKU is added during wave handoff, THEN the verdict is `{ allowed:true }` — resolving the §2.1 / §2.5 contradiction in F-18.
+- [ ] GIVEN the BULK policy is changed to `singleBatch: false` in configuration, WHEN a mixed-batch putaway is retried, THEN it returns `{ allowed:true }` **with no code deployment**.
+- [ ] GIVEN a bin with **negative** quantity, WHEN a different SKU is validated, THEN the verdict is `{ allowed:false, reasonCode:'WMS_BIN_NEGATIVE_STATE' }` — the bin is treated as occupied, not empty.
+- [ ] GIVEN a bin with negative quantity, WHEN the **same** SKU and lot are validated, THEN the verdict is `{ allowed:true }` so corrective putaway is possible.
+- [ ] GIVEN a bin whose item is set but `qty` is a tiny fractional residue (e.g. `0.0000001`), WHEN a different SKU is validated, THEN the verdict is `{ allowed:false }` — emptiness is decided by `custrecord_bs_item` being cleared, not by `qty` (invariant #20).
 - [ ] GIVEN a bin holding stock NetSuite has committed elsewhere, THEN it is treated as **occupied** — the WMS tracks physical quantity only and never sees NetSuite's available/committed split (Q-10 closed, moot).
-- [ ] GIVEN the validator, THEN it is exercised by unit tests covering every policy combination without a NetSuite connection.
+- [ ] GIVEN a call with a missing `policy` argument (a programmer error, not a business case), THEN a plain `Error` with `err.name === 'ERR_WMS_INVALID_ARGUMENT'` is thrown. *(D-23 error shape)*
+- [ ] GIVEN the validator, THEN it is exercised by unit tests covering every policy combination and both verdict branches without a NetSuite connection.
 
 ---
 
@@ -492,8 +502,12 @@ unit-testable core.
 
 > **Carved out of the T-0.3 gate — buildable now (D-23, 2026-08-10).** The registry data structure and
 > the pure key serialisation/parsing are the carve-out. Conditions: imports **no `N/` module** (not even
-> `N/error`; CI-enforced by `guard-carveout-imports.js`); **unit tests of the acceptance criteria below
-> are the deliverable** — especially the F-12 group-key round-trip through underscored enum values;
+> `N/error`; CI-enforced by `guard-carveout-imports.js`). **Error shape (D-23):** a handler's `validate`
+> reports a field/business failure as a **returned verdict** (`{ ok:false, reasonCode, field }`), not a
+> throw; a **programmer error** (a handler registered without `requiredFields`, a malformed key object)
+> throws a plain `Error` with `err.name` set to an `ERR_WMS_*` value. **Unit tests of the acceptance
+> criteria below are the deliverable** — especially the F-12 group-key round-trip through underscored
+> enum values;
 > **no hard-coded tuning** (invariant #9) — `governanceEst` values and thresholds are declared per
 > handler as data, and live thresholds reach handlers via injected context from T-2.5, never as
 > literals. **The RESTlet/mapper/reducer dispatchers that consume the registry stay held — do not write

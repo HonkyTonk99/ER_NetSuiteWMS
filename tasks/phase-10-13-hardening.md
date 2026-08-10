@@ -330,6 +330,12 @@ happy-path demo. Automate (headless browser / device lab) at least:
   location B must post to A** — the production-only bug D-14 calls out explicitly.
 - **Sync-on-reconnect** — a device back from N minutes offline drains via the **batch endpoint** in few
   round-trips, exactly once, no duplicates, honouring 429 backoff (T-3.2).
+- **Per-event acknowledgement (D-13)** — a partial-batch response (some `SUCCESS`, some `retryable`)
+  prunes exactly the acknowledged events by UUID; a terminal failure dead-letters to the operator.
+- **`DEFERRED` invisibility (D-13/invariant #19)** — a scan whose commit goes `DEFERRED` produces **no**
+  operator-facing message; only a `DEFERRAL_TIMEOUT` surfaces, and only to a supervisor.
+- **App update / version compatibility (D-13)** — a new shell activates on a safe reload not mid-task;
+  a too-old client gets `ERR_WMS_CLIENT_UPDATE_REQUIRED` and fails closed rather than posting.
 - **Reconnect conflict handling** — offline events invalid on arrival route to the exception queue,
   not silently dropped or posted (T-3.5).
 - **Idempotency across retry** — the same UUID replayed after a crash yields one posting (`externalid`
@@ -343,6 +349,9 @@ happy-path demo. Automate (headless browser / device lab) at least:
 - [ ] GIVEN a location switch with no connectivity, THEN the operator is warned/blocked per policy; with connectivity, the new cache fully purges and re-warms (not a delta).
 - [ ] GIVEN an event scanned offline in **location A**, and the operator then switches to **location B** before the queue drains, WHEN it syncs, THEN the event posts to **A** (its scan-time location), not B — the queue was not purged by the switch. *(D-14)*
 - [ ] GIVEN offline events that conflict on reconnect, THEN they raise exceptions rather than posting.
+- [ ] GIVEN a partial-batch response, THEN exactly the acknowledged events are pruned by UUID and the rest stay queued; a terminal failure dead-letters to the operator (D-13).
+- [ ] GIVEN a scan whose commit goes `DEFERRED`, THEN the client shows nothing about it and only `DEFERRAL_TIMEOUT` reaches a supervisor (D-13).
+- [ ] GIVEN a too-old client, WHEN it POSTs, THEN it receives `ERR_WMS_CLIENT_UPDATE_REQUIRED` and forces a shell update rather than posting malformed events (D-13).
 - [ ] GIVEN the suite, THEN it runs in CI (headless) and blocks merge on failure.
 
 ---

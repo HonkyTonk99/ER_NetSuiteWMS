@@ -42,10 +42,15 @@ PUTAWAY), if the source and target bins resolve to **different locations**, reje
 `CROSS_LOCATION_MOVE` exception. Inter-location movement is a NetSuite Transfer Order received through
 the inbound path at the destination — never a WMS bin transfer. The event's location comes from the
 operator's session, from the cache; it is not trusted from the payload alone.
+**Client version compatibility (D-13).** The payload carries a **client version**; an **incompatible
+(too-old) client is rejected with a distinguishable `ERR_WMS_CLIENT_UPDATE_REQUIRED` response** so the
+app can force a shell refresh rather than post malformed events — a stale client **fails closed**. The
+rule is one-directional: the server may add optional fields without breaking older clients; a breaking
+change bumps the required version (T-3.4).
 **Idempotency (AD-04):** a duplicate UUID fails at the platform on `externalid` and returns
 `idempotent:true` — plus the committer dedupe safety net. Structured JSON responses for success,
-idempotent-duplicate, auth failure, validation failure and platform error, each with a machine-readable
-code. Structured logging of execution time. Support an optional **batch payload** (array of events) so
+idempotent-duplicate, auth failure, validation failure, **client-update-required** and platform error,
+each with a machine-readable code. Structured logging of execution time. Support an optional **batch payload** (array of events) so
 the client can drain its queue in fewer round-trips — a direct mitigation for F-09.
 
 **Acceptance**
@@ -95,6 +100,14 @@ subsets for that location**. Resolved and pushed by the server, not fetched on d
 cannot be validated locally is a design failure, not a runtime condition. Cache carries a staleness
 limit and a sync token.
 
+*Staleness refresh vs in-progress work (D-13).* A staleness refresh (or a background re-warm) replaces
+**reference data only** — item, bin, policy, zone, pick-sequence subsets. It **must not discard
+in-progress operator work**: the durable outbound queue and the operator's current-task state (position
+in the task, quantities already entered) survive a refresh untouched. A refresh that would orphan a task
+the operator is mid-way through (e.g. the wave was reassigned server-side) does **not** silently wipe it
+— it routes through the same reconnect-reconciliation path as any stale event (T-3.5). Only a **location
+switch** (D-14/D-20) is a full purge, and that is an explicit operator action, never an implicit refresh.
+
 *Location switch (D-14, D-20):* selecting a different location is a **full purge and re-warm of the
 cache, not a delta**. **A switch requires connectivity** — the **one sanctioned exception to
 offline-first (invariant #11, formalised as D-20)**. It is **atomic**: if connectivity drops mid-warm,
@@ -110,8 +123,15 @@ switched to location B still posts to **A** (T-3.1 stamps `custrecord_se_locatio
 queue is **never** purged on a location switch. Exponential backoff with jitter. HTTP 429 /
 `SSS_REQUEST_LIMIT_EXCEEDED` treated as a normal throttle signal — back off, continue, never drop.
 
-*Batch drain:* reconnection sends through the batch endpoint in few round-trips. A device back from
-40 minutes offline must **not** emit 200 individual requests into the concurrency budget.
+*Batch drain and per-event acknowledgement (sync protocol):* reconnection sends through the batch
+endpoint in few round-trips. A device back from 40 minutes offline must **not** emit 200 individual
+requests into the concurrency budget. **The batch response is a per-event result array (T-3.1), and the
+client reconciles it against the queue by UUID:** an event is removed from the queue **only** when its
+own result comes back `SUCCESS` or `idempotent:true`; a `retryable` result stays queued for the next
+drain; a terminal `validation`/`auth` failure is moved to a **local dead-letter** (surfaced to the
+operator, never silently dropped). A partial-batch outcome (some succeed, some fail) therefore prunes
+**exactly** the acknowledged events — never the whole batch, never nothing. Because the UUID is the
+idempotency key (AD-04), re-sending an un-acknowledged event that *did* in fact land is harmless.
 
 **Concurrency-pool constraints — binding (F-29, D-19).** The endpoint shares the account's
 RESTlet/web-services pool; two burst modes (reconnect flush across all devices; shift-start cache warm)
@@ -131,6 +151,9 @@ staleness limits, with a supervisor-visible reason.
 **Acceptance**
 - [ ] GIVEN the device is in airplane mode for a full 45-minute pick run, THEN the operator completes every task with no functional difference from online operation.
 - [ ] GIVEN 200 events queued offline, WHEN connectivity returns, THEN they sync via batched requests in under 10 round-trips with no duplicates and no loss.
+- [ ] GIVEN a batch where some events succeed and some return `retryable`, WHEN the response is processed, THEN **exactly** the acknowledged (`SUCCESS`/`idempotent`) events are pruned by UUID and the `retryable` ones stay queued — never the whole batch, never nothing. *(per-event ack, D-13)*
+- [ ] GIVEN an event that returns a terminal `validation`/`auth` failure, THEN it moves to a local dead-letter surfaced to the operator, and is never silently dropped.
+- [ ] GIVEN a staleness refresh or background re-warm while the operator is mid-task, THEN reference data updates but the durable queue and the operator's in-progress task state are preserved (only a location switch purges). *(D-13)*
 - [ ] GIVEN the app is force-killed with a non-empty queue, WHEN it restarts, THEN the queue is intact and drains (IndexedDB-backed, D-13).
 - [ ] GIVEN `navigator.storage.persist()` is **denied**, THEN the app still functions, warns that storage is best-effort, and the unsynced-count / hard-block controls remain the safety net — the accepted D-13 residual is handled, not ignored.
 - [ ] GIVEN the network is fully offline, WHEN the app is reloaded, THEN the **service-worker-cached shell** brings it back up, and it operates against the **IndexedDB** cache — while the master-data warm (which needs connectivity) is not served from the service worker. *(D-13; shell ≠ data)*
@@ -237,15 +260,44 @@ lot → qty), replenishment move, bin transfer, putaway, short pick, stage/hando
 action that triggers a full purge + re-warm and needs connectivity. A visible indicator shows the
 current location at all times.
  Local validation against a cached task list so
-success renders in < 150 ms. Barcode symbologies and scan-to-field mapping defined per screen.
-Explicit sad paths: wrong bin scanned, wrong SKU, wrong lot, insufficient quantity, unknown barcode.
-Large-touch-target, glove-friendly layout.
+success renders in < 150 ms. Explicit sad paths: wrong bin scanned, wrong SKU, wrong lot, insufficient
+quantity, unknown barcode. Large-touch-target, glove-friendly layout.
+
+**Scanner input path and responsive target (D-13).** The **primary scan input is the device's hardware
+imager acting as a keyboard-wedge** (HID keystrokes terminated by a configurable suffix) — the app reads
+it through a focused hidden input with a per-screen scan-to-field mapping, **not** a camera. A **camera
+`getUserMedia` fallback is out of scope for v1** unless a target device lacks a hardware imager (flag as
+a Phase-3 device-survey finding, not a default). Barcode symbologies are enumerated per screen. The
+**responsive target is a single class of rugged Android handheld in portrait** — "responsive" here means
+fluid to that device's range and orientation lock, **not** a phone/tablet/desktop breakpoint matrix;
+any second form factor is a new scope item, not an implied one.
 
 **Storage model (D-13, detail in T-3.2).** The cached task list, master-data cache and durable outbound
 queue live in **IndexedDB** (protected by `navigator.storage.persist()`); a **service worker caches the
 static shell only** — it powers the warm-load and offline-reload path but never holds master data. The
 accepted D-13 residual (no background sync when un-foregrounded; possible eviction if `persist()` is
 denied) is carried in T-3.2, not re-litigated here.
+
+**Operator-facing state.** The screen persistently shows: **connectivity (online / offline)**, the
+**unsynced-event count and oldest-unsynced age** (T-3.2), the **current location** (D-14), and any
+**hard-block reason** in supervisor-readable terms. **The committer's `DEFERRED` status is NOT shown to
+the operator (F-25/invariant #19).** A `DEFERRED` posting is legitimate work in the wrong sequence,
+retried server-side — the operator was already acknowledged optimistically at scan time and did nothing
+wrong. Only two things reach the operator about a synced event: a **local dead-letter** for a terminal
+`validation`/`auth` rejection (T-3.2), and a **reconnect *conflict*** (T-3.5). `DEFERRED` is neither —
+surfacing it would train operators to re-scan correct work. It stays in the committer and, if it exceeds
+its retry budget, becomes a **supervisor** exception (`DEFERRAL_TIMEOUT`, T-4.7), never an operator one.
+
+**App update path and client/Suitelet version compatibility (D-13).** A service-worker-cached shell can
+strand an operator on a stale client. Requirement: (a) the service worker uses a **cache-versioned,
+update-on-reload** strategy — a new shell is fetched in the background and activated on the next
+safe reload, never mid-task; (b) every POST carries a **client version**, and the ingest Suitelet
+(T-3.1) **rejects an incompatible client with a distinguishable "update required" response** that the
+app turns into a forced refresh — a stale client must **fail closed, not post malformed events**; (c) the
+compatibility rule is **explicit and one-directional** — the server may add optional fields without
+breaking older clients, but a breaking change bumps the required version. An **offline** device on an
+old version keeps working against its cache and is updated on its next connected reload — the update path
+never blocks offline picking.
 
 **The served bundle carries NO secrets (D-19).** The GET response is **public** (Available-Without-Login).
 It must contain **no account identifiers, no role hints, no internal URLs, and no configuration beyond
@@ -272,6 +324,10 @@ These are the agreed ceilings; regressions past them fail the build (measured in
 - [ ] GIVEN the target device over warehouse Wi-Fi, THEN bundle size, cold first-load, warm-load and login-to-first-task are measured and all within the stated budget.
 - [ ] GIVEN 30 minutes of continuous use, THEN no memory growth or degradation is observed on the target device.
 - [ ] GIVEN the shipped public GET bundle is inspected, THEN it contains no account identifiers, role hints, internal URLs, secrets or configuration beyond what a public page may carry. *(D-19)*
+- [ ] GIVEN a scan event whose commit later goes `DEFERRED` (F-25), THEN the operator's app shows **nothing** about it — no error, no re-scan prompt; it is retried server-side and escalates only to a **supervisor** on `DEFERRAL_TIMEOUT`. *(D-13/invariant #19)*
+- [ ] GIVEN a hardware-imager scan (keyboard-wedge) on each screen, THEN it maps to the correct field via the per-screen mapping; camera scanning is not required for v1. *(scanner input path)*
+- [ ] GIVEN a new app version is deployed, WHEN a foregrounded device reloads, THEN it activates the new shell on a safe reload (never mid-task); an offline device keeps working and updates on its next connected reload. *(app update path)*
+- [ ] GIVEN a client too old for the current API, WHEN it POSTs, THEN it receives `ERR_WMS_CLIENT_UPDATE_REQUIRED` and forces a refresh — it never posts malformed events (fails closed). *(version compatibility, T-3.1)*
 
 ---
 

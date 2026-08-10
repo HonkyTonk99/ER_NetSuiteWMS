@@ -480,6 +480,10 @@ picker, wave generation and cache warm. **Two independent drivers now point at i
 
 This has moved from *"if Q-29 resolves that way"* to **likely required.** **Hold the design until both
 Q-29 and Q-36 land, so it is built once.** Not built now. Cross-referenced from Q-29 and Q-36.
+**The two are coupled (2026-08-10):** Q-29's recommended fallback (opt (a), a separate holding location)
+*creates* the location this class must exclude, so **Q-29's default may not fire unless Q-36 is also
+answered** — otherwise a holding location sits in the operator picker with nothing to exclude it. Q-36 is
+escalated to effectively required by the same date; if it stays open, Q-29 and the class both stay open.
 
 **Follow-ups this pass raised:** D-20 (location-switch connectivity exception), F-28/Q-33 (TO outbound
 unscoped — blocks Phase 6), Q-31 (session-location assumption), Q-32 (multi-location order), and the
@@ -654,9 +658,21 @@ requires a **new ruling** (a new D-number), not an appeal to this one.
 
 - **A carved-out file may not import ANY `N/` module.** No `N/record`, `N/search`, `N/runtime`,
   `N/cache` — **not even `N/error`.** A file that needs a SuiteScript module is, by definition, outside
-  the carve-out and stays held until the register closes. (Failure is therefore signalled by a plain
-  thrown `Error`; the `ERR_WMS_*` name/message convention is applied by the not-yet-built entry-point
-  caller, not inside the pure module.)
+  the carve-out and stays held until the register closes.
+
+**Error shape (do not defer `ERR_WMS_*` naming to a future caller — no translation layer).** Banning
+`N/error` does not mean losing the machine-readable name. Two rules, built to from the start:
+
+- **Business rejections do not throw — they return a structured verdict.** A rejected putaway, a
+  cluster that exceeds a cap, a field that fails validation are **normal outcomes**, not exceptions. The
+  pure function returns `{ allowed: false, reasonCode: 'WMS_...' }` (or the task's equivalent result
+  shape) so the caller branches on data, not on a caught throw. Bin policy evaluation (T-2.3b) is the
+  canonical case: `check(...)` returns a verdict.
+- **Programmer errors throw a plain `Error` with `err.name` set to the `ERR_WMS_*` value.** A JS
+  `Error` has a settable `name`, so `Object.assign(new Error(msg), { name: 'ERR_WMS_INVALID_ARGUMENT' })`
+  produces exactly the shape `N/error.create({name})` produces — the boundary sees the same
+  `err.name`, and there is **no translation layer to rot**. This is for contract violations (bad
+  arguments, impossible state), never for business rejections.
 - **Enforced in `scripts/guard-carveout-imports.js`, wired into `npm run verify`.** The guard holds a
   closed allowlist of the three file paths and fails the build if any of them imports an `N/` module.
   It is in place **before** the first line is written, so the boundary cannot be crossed by accident,
