@@ -42,8 +42,12 @@ As a warehouse planner, I want clustering to run over the full order book withou
 that wave planning is reliable at peak volume.
 
 **Requirement**
-Map/Reduce, **not** a Scheduled Script. `getInputData` searches unfulfilled, approved SO lines
-(`mainline=F`, `taxline=F`, `shippingline=F`), restricted to the release window.
+Map/Reduce, **not** a Scheduled Script. `getInputData` searches unfulfilled, approved **Sales Order
+*and* Transfer Order** lines (`mainline=F`, `taxline=F`, `shippingline=F`), restricted to the release
+window. **Transaction type is a parameter of the same engine (D-22), not a second engine** — a
+`transferorder` line is picked, staged and shipped out of its *source* location exactly like a sales
+order line; do not fork the wave/pick path. The wave carries which transaction type each order is (for
+the pack/ship step, which differs: a TO ships to another location, an SO to a customer).
 
 **Eligibility is gated on NetSuite commitment (F-22, AD-17).** Only lines with quantity committed by
 NetSuite enter a wave, and the wave's demand for a line is capped at the **committed** quantity, not
@@ -62,6 +66,7 @@ a single location is out of scope for this release (flag, do not silently split)
 - [ ] GIVEN pending sales orders sharing ≥ the configured threshold of SKUs **in the same location**, WHEN the pipeline runs, THEN they are grouped into a single Wave Pick record with its `custrecord_wave_location` set. *(FRD TC-WAV-01, D-14)*
 - [ ] GIVEN two orders that share every SKU but draw from **different locations**, WHEN the pipeline runs, THEN they are placed in **separate** waves.
 - [ ] GIVEN an order already assigned to an open wave, WHEN clustering runs, THEN it is not assigned to a second wave.
+- [ ] GIVEN an open **Transfer Order** with committed lines at its source location, WHEN the pipeline runs, THEN its lines are eligible and cluster through the **same engine** as sales-order lines (parameterised by transaction type), producing a wave in the source location. *(D-22)*
 - [ ] GIVEN a sales order line with zero committed quantity, WHEN clustering runs, THEN it is excluded from every wave.
 - [ ] GIVEN a line ordered 10 and committed 4, WHEN a wave is built, THEN wave demand for that line is 4.
 - [ ] GIVEN 5,000 pending orders, WHEN the pipeline runs, THEN it completes without governance or timeout failure.

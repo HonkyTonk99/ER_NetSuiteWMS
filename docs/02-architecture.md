@@ -326,7 +326,7 @@ registerHandler('REPLEN_MOVE', {
   requiredFields : ['sourceBinId', 'targetBinId', 'skuCode', 'qty', 'locationId'],
   validate       : (evt, ctx) => ctx.binPolicy.check(evt.targetBinId, evt.skuCode, evt.batchNumber),
   groupKey       : (evt) => ({ k: 'MOVE', locationId: evt.locationId, sourceBinId: evt.sourceBinId }),
-  commit         : (events, ctx) => ctx.postBinTransfer(events),
+  commit         : (events, ctx) => ctx.settleBinMove(events),   // WMS bin-state only; posts nothing to NetSuite (D-07)
   governanceEst  : (events) => 40 + events.length * 12,
 });
 ```
@@ -455,6 +455,14 @@ into a per-location queue** to "parallelise" — that would let location B's out
 location A's inbound drains and quietly break the guarantee for cross-cutting cycles. `DEFERRED` retry
 and negative-bin handling are evaluated per `(item, location)`, since NetSuite quantity is per location.
 
+**Transfer-Order ordering exception (F-30, D-22).** With TO outbound in scope, a **TO receipt at the
+destination cannot post before its source TO fulfilment** — but both are inbound-vs-outbound of the
+same transfer and can land in one cycle, and the global rule would attempt the receipt (inbound, Phase
+A) before the source fulfilment (outbound, Phase B). This is the **one ordering exception**: within
+Phase A, a **TO receipt whose corresponding source fulfilment is not yet `POSTED` is set `DEFERRED` and
+retried next cycle — never `FAILED`.** It is legitimate work waiting on its own source leg, exactly the
+`DEFERRED` semantics. (Amends invariant #18.)
+
 **`DEFERRED` is a distinct status from `FAILED`, and the distinction matters.** A deferred event is
 legitimate work in the wrong sequence — it will succeed once its receipt lands. A failed event is
 work that will never succeed without human intervention. Collapsing the two would fill the
@@ -472,3 +480,20 @@ A bin whose item is still set — including a negative one — is **occupied and
 and accepts only the SKU and lot already recorded against it until a supervisor resolves it.
 
 *(AD-13 moved into numeric order between AD-12 and AD-14.)*
+
+## AD-19 — Privilege separation: the public surface cannot touch the ledger *(new, per D-19)*
+
+Under D-19 the ingest endpoint is a **public, Available-Without-Login Suitelet.** Its blast radius is
+bounded **by design, not by hope**, through a hard privilege split:
+
+| Surface | Role | May do | May NOT do |
+|---|---|---|---|
+| **Public ingest Suitelet** (`wms_sl_scan_ingest`, GET+POST) | dedicated least-privilege **Execute-As role** | **append** to `customrecord_wms_scan_event`; **read** reference data (item/bin/policy/config) | any transaction permission; edit/delete events; read financial data |
+| **Committer** (`wms_mr_ledger_commit`) | separate **authenticated** deployment role, **not publicly reachable** | transform SOs/TOs, post Item Fulfillments/Receipts/Adjustments | be invoked from the browser |
+
+**The property, stated plainly:** *a compromise of the public endpoint can inject **queue noise** — bogus
+scan events — but it **cannot touch the ledger.*** Bad events are caught by commit-time invariant
+re-assertion (F-03) and land in the exception queue; they never post. This is why ingest and commit are
+different roles on different reachability, and why the ingest role holds **no** transaction permission
+(T-1.4). Device auth (D-21) and rate limiting (F-29) reduce the *volume* of injectable noise; AD-19
+bounds its *worst case*.

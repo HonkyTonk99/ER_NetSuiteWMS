@@ -38,7 +38,7 @@ and §7 receipt/consumption ordering.
                               (WMS allocates WITHIN NetSuite's commitment)
 ```
 
-**NetSuite never knows a bin exists.** No `bintransfer`. No `binnumber` on any inventory detail
+**NetSuite never knows a bin exists.** No bin-transfer record. No bin-number field on any inventory-detail
 line. No Bin Management feature, basic or advanced. No Advanced Bin / Numbered Inventory Management
 licence.
 

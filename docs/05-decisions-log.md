@@ -150,7 +150,7 @@ Accepted, and it is the most consequential constraint raised so far. Full treatm
 **The hard fact.** Oracle's documentation states plainly: *"If you use basic Bin Management, you
 cannot associate serial or lot items with bins."* The FRD's central invariant is 1 SKU **and 1
 batch** per bin. On a basic account, **NetSuite cannot record which lot is in which bin at all.**
-Every inventory-writing sample in the FRD sets `binnumber` and `issueinventorynumber` on the same
+Every inventory-writing sample in the FRD sets the NetSuite bin-number field and the issue-inventory-number field on the same
 subrecord line, which requires Advanced Bin / Numbered Inventory Management specifically — and
 throws without it. Logged as **F-19**.
 
@@ -212,8 +212,8 @@ because stock has not changed location.
 
 **Three risks it brings into the open**, two of them previously masked:
 
-- **F-19 rewritten.** The FRD's code annex writes `binnumber` and creates Bin Transfer records.
-  Under D-07 neither will ever be valid. `binnumber` must appear nowhere in the codebase.
+- **F-19 rewritten.** The FRD's code annex writes the NetSuite bin-number field and creates bin-transfer records.
+  Under D-07 neither will ever be valid. The bin-number field must appear nowhere in the codebase.
 - **F-20 (new).** Back-office movements cannot be attributed to a bin. A direct Inventory Adjustment
   changes location quantity with no bin information; reconciliation detects the mismatch but
   **cannot resolve it**, because the data needed never existed. Managed by policy plus a blocking
@@ -470,13 +470,16 @@ session context**, not an afterthought:
 - **Assumption logged:** one operator holds **one location per session** (register Q-31), pending
   confirmation.
 
-**Dependency on Q-29 (bidirectional).** The standing recommendation for F-26/Q-29 is a **separate
-NetSuite location** for non-fulfillable stock. If the sponsor takes it, **that location is not a
-warehouse — it is a holding bucket.** Under D-14 as written it would wrongly appear in the operator's
-location picker, be eligible for wave generation, and get a cache warm. **If Q-29 resolves that way,
-the location model needs a location *class* (operational vs holding)** — holding locations are excluded
-from the picker, wave generation and cache warm. **Not built now** (Q-29 is with the sponsor); flagged
-so the two decisions stay linked. See Q-29 (→ D-14) and Q-33.
+**Location class — now likely required (two independent drivers).** A **location *class* (operational
+vs holding)** is needed so that non-warehouse NetSuite locations are excluded from the operator's
+picker, wave generation and cache warm. **Two independent drivers now point at it:**
+1. **Q-29** — if F-26 resolves via a separate NetSuite location for non-fulfillable stock, that
+   location is a **holding bucket, not a warehouse.**
+2. **Q-36** (from D-22) — if the client uses **in-transit inventory** on transfer orders, the
+   in-transit NetSuite location is likewise **not a warehouse.**
+
+This has moved from *"if Q-29 resolves that way"* to **likely required.** **Hold the design until both
+Q-29 and Q-36 land, so it is built once.** Not built now. Cross-referenced from Q-29 and Q-36.
 
 **Follow-ups this pass raised:** D-20 (location-switch connectivity exception), F-28/Q-33 (TO outbound
 unscoped — blocks Phase 6), Q-31 (session-location assumption), Q-32 (multi-location order), and the
@@ -515,10 +518,19 @@ required Bin Management enabled and contradicted D-07 — so this **confirms D-0
 provisional.** T-0.1 keeps a general namespace-collision check on ACP-hygiene merits. **Supersedes**
 the provisional "D-07 contingent on Q-13" caveat.
 
-## D-19 — Browser transport & auth: same-origin Suitelets, no per-operator login (Option C) · *recommended, pending developer confirmation, 2026-08-09*
+## D-19 — Browser transport & auth: same-origin Suitelets, no per-operator login (Option C) · **CONFIRMED 2026-08-09**
 
 Two corrections from the NetSuite developer that the earlier design got wrong, and the sponsor's auth
-ruling. **Recommended-pending-confirmation** (three questions to the developer at the end).
+ruling. **CONFIRMED** — the developer answered the three open questions (verbatim basis below):
+
+> 1. **One Available Without Login Suitelet handles both roles — GET serves the SPA, POST is the JSON
+>    API.** No second deployment, no CORS problem.
+> 2. **Governance: 1,000 units per Suitelet request.**
+> 3. **No logged-in operator context — Execute As Role must be a dedicated least-privilege role.**
+
+So the model is settled: one anonymous Suitelet, GET = app shell, POST = ingest API, same origin.
+Device authentication becomes mandatory (the endpoint is public) — see **D-21**; and the shared
+concurrency pool must be throttled — see **F-29**.
 
 **Transport — Suitelet is the API, not a RESTlet.** A Suitelet and a RESTlet are served from
 *different hosts*, so a PWA calling a RESTlet is cross-origin (CORS). The PWA is served by a Suitelet
@@ -546,13 +558,20 @@ review.**
 
 **Q-02 (device auth) is subsumed** into T-3.3 and closed as a separate question.
 
-**Confirm with the developer before treating Option C as settled:** (a) can an Available Without Login
-Suitelet serve an HTML/JS page **and** act as its JSON API? (b) same concurrency budget as
-authenticated Suitelets? (c) any governance or session differences? Until answered, this is
-**recommended, not final.**
+**Confirmed (2026-08-09):** (a) one Available-Without-Login Suitelet serves the HTML/JS app on GET and
+is its JSON API on POST — no second deployment, no CORS; (b) governance is 1,000 units per request;
+(c) no logged-in operator context — the Suitelet runs under a dedicated least-privilege **Execute As
+Role** (AD-19 privilege separation).
+
+**Consequences now recorded:** **D-21** (device authentication is mandatory — the endpoint is public),
+**F-29** (concurrency-pool contention on the shared anonymous-Suitelet pool → throttling constraints on
+T-3.2/T-3.4), **AD-19** (privilege separation — the public surface can append queue events and read
+reference data only, never touch the ledger), the served bundle carries **no secrets** (T-3.4), and
+`allowed_locations` becomes a **WMS-enforced** control (§3.11, no longer advisory).
 
 **Supersedes/affects:** AD-01, AD-09/D-13 (delivery detail), T-3.1 (Suitelet), T-3.3 (rewritten), Q-02
-(closed), Q-30 (resolved). D-13's PWA propagation is held until (a)–(c) are confirmed.
+(closed), Q-30 (resolved). **D-13's PWA propagation is the next pass** — its design must now satisfy
+F-29's throttling and D-21's device auth, which is why those are recorded first.
 
 ## D-20 — A location switch requires connectivity: the one sanctioned exception to invariant #11 · *accepted 2026-08-09*
 
@@ -576,6 +595,47 @@ for a case that occurs once a shift, at the dock, where connectivity exists.
 purge + re-warm), T-3.4 (login/location select), T-12.5 (tests). Q-31 (one location per session) is the
 related assumption.
 
+## D-21 — Device authentication is mandatory · *accepted 2026-08-09*
+
+The D-19 ingest endpoint is an **Available-Without-Login Suitelet — publicly reachable and
+unauthenticated at the platform level** (F-27). Operator badge/PIN (D-19/T-3.3) proves *who is
+scanning*; it does **not** prove *which device* is talking to the endpoint. **A per-device credential
+is mandatory.** Recording the **requirement, not the mechanism** (mechanism is Phase 3 design, task
+stub T-3.6):
+
+- A **per-device credential issued at provisioning**, revocable per device.
+- **Checked as the very first operation in the POST handler, before any record load** — an unknown or
+  revoked device is rejected on a **cheap path that consumes minimal governance** (no cache read, no
+  projection read).
+- A **per-device rate cap** (distinct from the per-token/per-IP caps of F-29).
+- **Device identity and operator identity are separate concerns — do not merge them.** Device identity
+  is a transport credential; operator identity (badge/PIN → `custrecord_se_operator`) is in the payload.
+
+**Affects:** T-3.1 (device check is the first POST step), T-3.3 (auth hardening), new **T-3.6** (device
+credential design — stub only, not designed here), F-27 (this is part of its mitigation).
+
+## D-22 — Transfer Order outbound is in scope · *accepted 2026-08-09 (resolves Q-33 as option (a))*
+
+D-14 forbids cross-location movement in the WMS and routes inter-location stock through a NetSuite
+**Transfer Order**. F-28 flagged that **TO outbound** (pick / stage / ship out of the *source*
+location) was scoped nowhere. **Ruling: option (a) — TO outbound is in scope.** The client does move
+stock between locations, so the WMS must pick, stage and ship transfer orders out of the source.
+
+- **Wave eligibility, allocation, pick and stage extend to transaction type `transferorder` alongside
+  `salesorder` — the same engine, parameterised by transaction type, NOT a parallel one.** (State this
+  explicitly so nobody forks the wave/pick engine.)
+- **The ledger adapter (T-2.7) gains the TO-fulfilment shape.** The NetSuite transform target
+  (transform a Transfer Order into its fulfilment) **requires developer confirmation before build** —
+  do not assert NetSuite transform behaviour in the docs.
+- **Confirm the Phase 5B inbound path (D-09) handles receipt of a TO the WMS itself fulfilled at
+  source** — the destination receipt is the other half of the same transfer.
+- **Ordering:** a TO receipt cannot post before its source fulfilment — see **F-30** (amends AD-18 /
+  invariant #18). And whether an **in-transit** NetSuite location exists is **Q-36** — if it does, it
+  is a holding location, not a warehouse (location class, Q-29/§ D-14).
+
+**Affects:** delivery plan + phase scope (adds tasks to Phases 6–7, reshapes Phase 5B), T-2.7, T-6.1/2,
+T-6.3, T-7.1, AD-18, invariant #18. Raises **F-30**, **Q-36**, **Q-37**.
+
 ---
 
 ## Superseded
@@ -592,7 +652,7 @@ related assumption.
 | AD-18 per-item dependency graph | **Replaced by D-11** with a global two-phase priority |
 | Q-24 (costing method), Q-26 (negative inventory) | **Closed by D-11** |
 | D-06 and the five-tier capability model | **Superseded by D-07** |
-| F-19 (original: tier/licensing problem) | **Rewritten** — now "binnumber will never be valid" |
+| F-19 (original: tier/licensing problem) | **Rewritten** — now "the bin-number field will never be valid" |
 | Q-18, Q-19, Q-20 (tier/licensing questions) | **Closed by D-07** |
 | AD-16 (capability tier abstraction) | **Rewritten** as the NetSuite boundary |
 | `06-capability-tiers.md` | **Replaced** by `06-netsuite-boundary.md` |

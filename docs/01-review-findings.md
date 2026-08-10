@@ -236,14 +236,12 @@ const orderId   = keyParts[1];   // "MOVE"    ← wrong
 `REPLEN_MOVE` and `BIN_TRANSFER` both contain underscores, so every replenishment and bin transfer is
 mis-routed. Use a JSON key or a delimiter that cannot occur in the enum (e.g. `|`).
 
-### F-13 · S4 · Bin Transfer sets `location` to a bin internal ID → `T-4.3`
+### F-13 · S4 · The FRD's bin-transfer sample sets `location` to a bin internal ID → `T-4.3`
 
-```js
-binTransfer.setValue({ fieldId: 'location', value: events[0].values.custrecord_se_source_bin.value });
-```
-
-`location` expects a Location internal ID; a Bin ID is passed. Also the reduce key does not include
-location, so events from different locations can be grouped into one Bin Transfer, which cannot save.
+The FRD's bin-transfer sample sets the transaction's `location` field from a bin's internal ID. The
+`location` field expects a Location internal ID; a bin ID is passed. Also the reduce key does not
+include location, so events from different locations can be grouped into one bin-transfer that cannot
+save.
 
 > **Superseded framing (D-07).** Under D-07 there is **no NetSuite Bin Transfer record at all** — bin
 > moves post nothing, so the "location field" defect is moot. What survives is the *grouping* lesson,
@@ -310,12 +308,12 @@ Each of these is either a task in the plan or an open question. None of them can
 
 *Raised 2026-08-07; rewritten 2026-08-08 per D-07.*
 
-Every inventory-writing sample in the FRD sets `binnumber` on an `inventoryassignment` subrecord
-line — in `processFulfillmentBatch`, `processBinTransferBatch` and the pack Suitelet — and
-`processBinTransferBatch` creates a `record.Type.BIN_TRANSFER` outright.
+Every inventory-writing sample in the FRD sets the NetSuite bin-number field on an inventory-assignment
+subrecord line — in the fulfillment batch processor, the bin-transfer batch processor and the pack
+Suitelet — and the bin-transfer batch processor creates a NetSuite bin-transfer record outright.
 
 Under D-07 **NetSuite has no bins at all**, so none of this can ever work: no Bin Management
-feature, no `binnumber` field to write, no Bin Transfer record type to create. This is not a tier
+feature, no bin-number field to write, no bin-transfer record type to create. This is not a tier
 limitation to be configured around; it is code targeting a dimension that does not exist in the
 target account and never will.
 
@@ -327,7 +325,7 @@ target account and never will.
 **Correction (AD-16):** the ledger interface is three transaction shapes — Item Fulfillment,
 Inventory Adjustment, Inventory Transfer — and bin movements post nothing. The only variability is
 per-item tracking mode — **PLAIN or LOT** (SERIAL is out of scope and *rejected* by the adapter, D-08),
-resolved from the item record by the adapter (T-2.7). `binnumber` appears nowhere in the codebase.
+resolved from the item record by the adapter (T-2.7). No bin-number field appears anywhere in the codebase.
 
 ### F-20 · S2 · Back-office movements cannot be attributed to a bin → `T-10.2`, `T-8.3`
 
@@ -514,9 +512,11 @@ that can only create scan events and read reference data, and audit logging. **T
 carried into the pre-go-live security review** (the endpoint is the largest new attack surface the
 programme introduces) and re-tested whenever the auth code changes.
 
-### F-28 · S1 · Inter-location movement is mandated but has no WMS execution path → **Q-33** *(blocks Phase 6 scope)*
+### F-28 · S1 · Inter-location movement is mandated but has no WMS execution path → **RESOLVED (Q-33 → D-22, option (a))**
 
-*Raised 2026-08-09, arising from D-14.*
+*Raised 2026-08-09, arising from D-14. **Resolved 2026-08-09 by D-22:** option (a) — TO outbound is in
+scope; the WMS picks/stages/ships transfer orders out of the source. Bin state stays accurate. See the
+ordering consequence F-30. The three candidates are retained below for traceability.*
 
 D-14 **forbids cross-location movement in the WMS** and routes inter-location stock movement through a
 **NetSuite Transfer Order** (`ERR_WMS_CROSS_LOCATION_MOVE`). D-09 put Transfer Order **receipt** in
@@ -540,8 +540,49 @@ miss D-14 introduced.
   all. *Bin state stays accurate* because the movement never happens; but it constrains operations and
   may not match how the business runs.
 
-**Blocks Phase 6 scope definition** (not Phase 0) — the wave/pick engine cannot be designed until the
-transaction-type question is answered.
+~~**Blocks Phase 6 scope definition**~~ — resolved by D-22 (option a); Phase 6 scope can proceed with
+`transferorder` as a first-class outbound transaction type.
+
+### F-29 · S2 · Concurrency-pool contention on the anonymous-Suitelet pool → design constraints on `T-3.2`, `T-3.4`
+
+*Raised 2026-08-09, arising from D-19.*
+
+Anonymous Suitelets share the account's **RESTlet / web-services concurrency pool** with every existing
+integration. Two client behaviours are **burst modes** and are unthrottled in the current plan — either
+can exhaust the shared pool and starve scan ingestion:
+1. **Reconnect flush** — many devices returning from a dead zone at once, each draining its queue.
+2. **Shift-start cache warm** — the whole floor warming per-location caches within the same few minutes.
+
+**Binding design constraints (recorded on T-3.2 / T-3.4):**
+- **Batched POSTs — N events per request, not N requests.** Max batch size is a
+  `customrecord_wms_config` value, **bounded by the 1,000-unit governance budget with headroom**;
+  **measure and record actual governance units per event** so the bound is real, not guessed.
+- **One in-flight request per device, ever.**
+- **Jittered reconnect and jittered cache warm** — randomised delay so devices do not synchronise.
+- **The Suitelet returns a distinguishable *busy* response, and the client treats it as
+  retry-with-backoff, never as a failed event.** *A concurrency rejection is not an exception* — it must
+  never reach the exception queue.
+
+Sizing depends on **Q-34** (the account's Integration Governance limit and existing consumers — answered
+as an assumption: the WMS has the pool to itself, but that expires the day another integration is added).
+A larger pool raises the ceiling; it does **not** change burst behaviour, so none of the above relaxes.
+
+### F-30 · S2 · Transfer-order ordering inverts invariant #18 → `T-5.8`, `T-4.7` *(amends AD-18)*
+
+*Raised 2026-08-09, arising from D-22.*
+
+With TO outbound in scope (D-22), a transfer produces a **source fulfilment** (outbound) and a
+**destination receipt** (inbound) for the same stock. Invariant #18 posts **all inbound before all
+outbound** every cycle — so if both land in one cycle, the committer would attempt the **destination
+receipt before the source fulfilment.** The receipt cannot post first: NetSuite has nothing to receive
+until the source has shipped, and forcing it would drive the source negative (F-25).
+
+**Resolution (recorded as the design):** within the inbound phase, a **TO receipt whose corresponding
+source fulfilment is not yet `POSTED` is set `DEFERRED` and retried next cycle — never `FAILED`.** This
+is the **one ordering exception** to invariant #18, and it reuses the existing `DEFERRED` semantics
+(legitimate work waiting on its own source leg). AD-18 and invariant #18 are amended to name it.
+**Acceptance:** a TO receipt committed in the same cycle as its unposted source fulfilment is `DEFERRED`,
+and posts on the cycle after the source fulfilment reaches `POSTED`.
 
 ---
 

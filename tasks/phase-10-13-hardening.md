@@ -297,7 +297,7 @@ putaway) and the **ordering case** from F-24 — receive and pick the same stock
 - [ ] GIVEN stock received and picked within one minute, THEN the receipt posts first and the fulfillment succeeds (F-24).
 - [ ] GIVEN a serialised item, THEN it is rejected with an explicit out-of-scope exception.
 - [ ] GIVEN a single order carrying one PLAIN and one LOT line, THEN it commits as one Item Fulfillment with correct detail per line.
-- [ ] GIVEN any test run, THEN no NetSuite transaction is created for a bin movement and no `binnumber` is written.
+- [ ] GIVEN any test run, THEN no NetSuite transaction is created for a bin movement and no bin-number field is written.
 - [ ] GIVEN a pull request, THEN unit tests run in CI and block merge on failure.
 
 ---

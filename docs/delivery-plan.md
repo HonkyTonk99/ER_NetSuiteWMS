@@ -4,6 +4,15 @@ Planning bundle derived from `FRD Advance Warehouse Management.pdf`. **Planning 
 implementation has begun.** Structured for Claude Code: drop this into the repo root and the
 conventions in `CLAUDE.md` apply automatically.
 
+> **Revision 8 — 2026-08-09.** The decisions log now runs to **D-22** and is authoritative; this plan
+> is a snapshot. Since Revision 6: multi-location (D-14) and its follow-ups (D-20 location-switch
+> exception); PWA + Option C auth confirmed (D-13/D-19) with device auth (D-21), privilege separation
+> (AD-19), and concurrency throttling (F-29); and **Transfer Order outbound in scope (D-22)** —
+> **which adds tasks to Phases 6–7** (wave/allocation/pick/stage extend to transaction type
+> `transferorder` alongside `salesorder`, same engine) **and reshapes Phase 5B** (a TO receipt is now
+> the destination half of a WMS-fulfilled transfer, with a new ordering exception F-30). Read
+> [`docs/05-decisions-log.md`](05-decisions-log.md) first — it overrides everything below.
+>
 > **Revision 6 — 2026-08-08.** **Costing is NetSuite's concern and out of WMS scope. The WMS may go
 > negative; NetSuite may not. Inbound always posts before outbound** (D-11). This simplifies the
 > sequencing design to a two-phase priority and adds a `DEFERRED` event status. Revision 5 applied

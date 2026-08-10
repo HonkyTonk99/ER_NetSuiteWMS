@@ -74,7 +74,9 @@ version.*
 17. **Never write costing logic.** NetSuite runs costing. The WMS supplies quantity, date and lot and
     has no opinion about valuation. No event ordering exists for costing purposes. (D-11, AD-17)
 18. **Inbound posts before outbound, every cycle.** Two phases: all receipts, then all fulfillments.
-    Global priority, not a per-item dependency graph. (F-24, AD-18)
+    Global priority, not a per-item dependency graph. **One exception (F-30, D-22): a Transfer Order
+    receipt whose source TO fulfilment is not yet `POSTED` is set `DEFERRED` and retried — never
+    `FAILED` — because the destination receipt cannot precede its own source leg.** (F-24, F-30, AD-18)
 19. **The WMS may go negative; NetSuite may not.** An outbound posting NetSuite cannot satisfy is
     set `DEFERRED` and retried — **never `FAILED` on first attempt.** Deferred is legitimate work in
     the wrong sequence; failed needs a human. Keep them distinct or the exception queue becomes

@@ -504,7 +504,11 @@ The complete ledger interface, and nothing else, per `06-netsuite-boundary.md` �
 
 **Outbound:**
 - **Item Fulfillment** — location, item, quantity, plus inventory detail shaped by the line item's
-  tracking mode: none for PLAIN, lot number and quantity for LOT.
+  tracking mode: none for PLAIN, lot number and quantity for LOT. **Sourced from a Sales Order OR a
+  Transfer Order (D-22)** — the same fulfilment shape, parameterised by the source transaction type.
+- **Transfer Order fulfilment (D-22)** — the source-side ship of an inter-location transfer.
+  ⚠️ **The NetSuite transform target requires developer confirmation before build** (transform a
+  Transfer Order to its fulfilment); do **not** assert the transform behaviour in this doc until confirmed.
 - **Inventory Adjustment** — count variances only, documented adjustment account.
 - **Inventory Transfer** — genuine location-to-location moves only (Q-08).
 
@@ -524,7 +528,7 @@ posted on a guess.
 **Transaction date comes from scan time, not commit time** (F-23, AD-17); where that period has
 closed, post current and raise a `CLOSED_PERIOD_POSTING` exception.
 
-**`binnumber` must not appear anywhere in the codebase**, including this module. Enforced by a CI
+**The NetSuite bin-number field must not appear anywhere in the codebase**, including this module. Enforced by a CI
 grep.
 
 **Acceptance**
@@ -533,7 +537,7 @@ grep.
 - [ ] GIVEN a PO receipt event, WHEN it commits, THEN an Item Receipt posts against the correct PO with lot and expiry recorded.
 - [ ] GIVEN an event whose scan-date period has closed, THEN it posts to the current period and raises a `CLOSED_PERIOD_POSTING` exception.
 - [ ] GIVEN a bin transfer or replenishment event, WHEN it commits, THEN **no** NetSuite transaction is created, the WMS projection updates, and the event is marked POSTED rather than FAILED.
-- [ ] GIVEN a CI grep for `binnumber`, `BIN_TRANSFER` record type or Bin Management feature checks, THEN there are **zero** matches in the codebase.
+- [ ] GIVEN the CI guard (`scripts/guard-forbidden-tokens.js`) scanning for the NetSuite bin-number field, the bin-transfer record type and Bin Management feature checks, THEN there are **zero** matches in the codebase.
 - [ ] GIVEN an item whose tracking mode changes in NetSuite, WHEN the item cache refreshes, THEN subsequent postings use the new mode with no deployment.
 
 ---

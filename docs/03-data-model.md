@@ -264,7 +264,7 @@ this record; identity flows into `custrecord_se_operator` (→ Employee).
 | `custrecord_op_pin_hash` | Free-Form Text | **Hashed** PIN (salted). **Never plaintext** (T-3.3) |
 | `custrecord_op_active` | Checkbox | Deactivating cuts the operator off; every API call checks it |
 | `custrecord_op_role` | List/Record | Picker / Packer / Supervisor — drives on-device capability |
-| `custrecord_op_allowed_locations` | Multi-select → Location | **New (D-14).** Which locations this operator may select at login. **Location is a per-session selection, not a property of the operator** — the record itself is location-agnostic (§ Location scoping). ⚠️ **Advisory until D-19 resolves:** under Option C the Suitelet is Available-Without-Login, so there is **no platform-enforced identity** behind this field. **If Option C is confirmed, the WMS owns operator authentication end to end and this becomes a WMS-enforced control** (validated in the session-token issuance, T-3.3) — a task to write **then**, not now |
+| `custrecord_op_allowed_locations` | Multi-select → Location | **New (D-14).** Which locations this operator may select at login. **Location is a per-session selection, not a property of the operator** — the record itself is location-agnostic (§ Location scoping). **WMS-ENFORCED (D-19 confirmed):** the Suitelet runs under one fixed Execute-As role, so per-operator authorisation is WMS-owned by definition — this list is validated at login and at session-token issuance (T-3.3), and the token carries the selected location. Not advisory |
 
 > The PIN hash and the HMAC session-token secret (a script parameter) are the two secrets in the
 > system. Neither is ever returned to the browser. See T-3.3 and F-27.

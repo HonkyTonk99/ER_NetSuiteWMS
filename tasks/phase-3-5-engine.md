@@ -15,13 +15,26 @@ acknowledgement, so that the operator is never left waiting and the browser make
 
 **Requirement**
 A **Suitelet** (not a RESTlet — RESTlets are a different host and would force CORS; the PWA is served by
-a Suitelet, D-13, so its API is a sibling Suitelet, same origin). POST accepting the scan payload (uuid,
+a Suitelet, D-13, so its API is a sibling Suitelet, same origin; GET serves the SPA, POST is this API,
+D-19 confirmed). POST accepting the scan payload (uuid,
 eventType, operatorId, waveId, orderId, orderLineKey, skuCode, batchNumber, sourceBinId, targetBinId,
-qty, locationId, deviceId, clientTs) plus the **HMAC session token** (T-3.3). Flow: validate token
+qty, locationId, deviceId, clientTs) plus the **device credential (D-21)** and the **HMAC session
+token** (T-3.3). Flow: **device credential check (D-21) — the FIRST operation, before any record load,
+on a cheap path** → **concurrency admission (F-29)** → validate token
 (T-3.3) → schema validation → resolve item/bin metadata from cache → read bin state projection (T-2.3)
 → apply bin policy (T-2.3b) → **cross-location check (D-14)** → `writeScanEvent` (sets `externalid` = UUID,
 and `custrecord_se_location` = the **session location**) → update projection → return.
 **No saved search on the success path. No `record.transform`. No inventory posting. No lock.**
+
+**Device auth is the first gate (D-21).** An unknown or revoked device is rejected **before any cache or
+projection read**, on a path that consumes minimal governance — so a hostile flood cannot make the
+endpoint do expensive work. Device identity (transport credential) is separate from operator identity
+(badge/PIN in the payload → `custrecord_se_operator`); do not merge them.
+
+**Concurrency admission (F-29).** When the shared pool is saturated the Suitelet returns a
+**distinguishable *busy* response** (e.g. HTTP 429-equivalent code); the client treats it as
+**retry-with-backoff**, never as a failed event. **A concurrency rejection is NOT an exception** — it
+never creates a `customrecord_wms_exception` and never marks an event FAILED.
 
 **Cross-location movement is forbidden (D-14).** For any move event (BIN_TRANSFER / REPLEN_MOVE /
 PUTAWAY), if the source and target bins resolve to **different locations**, reject with
@@ -41,6 +54,8 @@ the client can drain its queue in fewer round-trips — a direct mitigation for 
 - [ ] GIVEN a payload violating bin isolation, WHEN posted, THEN no event is created and the response carries `ERR_WMS_BIN_CONSTRAINT_VIOLATION` with the conflicting item and lot in the message.
 - [ ] GIVEN a transfer event whose source and target bins resolve to **different locations**, WHEN posted, THEN it is rejected with `ERR_WMS_CROSS_LOCATION_MOVE`, **no event is created, and bin state is mutated on neither side**; a `CROSS_LOCATION_MOVE` exception is raised. *(D-14)*
 - [ ] GIVEN a duplicate UUID, WHEN posted, THEN the create fails at the platform on `externalid` and the response is `SUCCESS` with `idempotent:true` — exactly one row exists.
+- [ ] GIVEN a POST with a missing or revoked **device credential**, WHEN posted, THEN it is rejected as the **first** operation, before any cache/projection read, and governance consumed is minimal (measured). *(D-21)*
+- [ ] GIVEN the shared concurrency pool is saturated, WHEN a POST arrives, THEN it receives the **busy** response and the client retries with backoff; **no event is created, no exception is raised, nothing is marked FAILED**. *(F-29)*
 - [ ] GIVEN a batch of 20 events, WHEN posted in one request, THEN each is processed independently and the response contains a per-event result array.
 - [ ] GIVEN a request with a missing or invalid session token, WHEN posted, THEN it is rejected (see T-3.3) and no event is created.
 - [ ] GIVEN any request, WHEN governance is measured, THEN the success path executes zero saved searches.
@@ -82,6 +97,18 @@ queue is **never** purged on a location switch. Exponential backoff with jitter.
 *Batch drain:* reconnection sends through the batch endpoint in few round-trips. A device back from
 40 minutes offline must **not** emit 200 individual requests into the concurrency budget.
 
+**Concurrency-pool constraints — binding (F-29, D-19).** The endpoint shares the account's
+RESTlet/web-services pool; two burst modes (reconnect flush across all devices; shift-start cache warm)
+must be throttled or they starve scan ingestion:
+- **Batched POSTs — N events per request, not N requests.** Max batch size is a
+  `customrecord_wms_config` value **bounded by the 1,000-unit/request governance budget with headroom**;
+  T-12.1 **measures and records the actual governance units per event** so the bound is real.
+- **One in-flight request per device, ever** — the client never has two POSTs outstanding.
+- **Jittered reconnect *and* jittered cache warm** — randomised delay so devices don't synchronise into
+  a spike (the shift-start warm is the worst offender).
+- **Busy response = retry-with-backoff, never a failed event** (T-3.1). A concurrency rejection must
+  **never** surface as an exception or a lost scan.
+
 Persistent on-screen unsynced count and oldest-unsynced age. Hard-block only on configured depth or
 staleness limits, with a supervisor-visible reason.
 
@@ -90,6 +117,8 @@ staleness limits, with a supervisor-visible reason.
 - [ ] GIVEN 200 events queued offline, WHEN connectivity returns, THEN they sync via batched requests in under 10 round-trips with no duplicates and no loss.
 - [ ] GIVEN the app is force-killed with a non-empty queue, WHEN it restarts, THEN the queue is intact and drains.
 - [ ] GIVEN the server returns 429 for 30 s, WHEN the client drains, THEN it backs off with jitter and all events post exactly once.
+- [ ] GIVEN a device draining a queue, THEN it has **at most one request in flight** and sends events **batched** (≤ the config max), never one request per event. *(F-29)*
+- [ ] GIVEN the whole floor reconnecting or warming caches at shift start, THEN client-side jitter spreads the requests so no synchronised spike hits the pool. *(F-29)*
 - [ ] GIVEN the local cache exceeds its staleness limit, THEN the operator is warned and, past the hard limit, blocked with a supervisor-visible reason.
 - [ ] GIVEN queue depth exceeds the configured limit, THEN the operator is blocked with a clear message visible to a supervisor.
 - [ ] GIVEN the operator switches location, THEN the cache is fully purged and re-warmed for the new location (not a delta), and the switch requires connectivity — offline, the switch is refused cleanly with an operator-readable message, not queued. *(D-14/D-20)*
@@ -156,8 +185,16 @@ controls**:
 Documented operator provisioning / PIN-reset / deactivation runbook. See **F-27** (internet-exposed
 write endpoint — accepted, mitigated by these controls, must be in the pre-go-live security review).
 
+**Device authentication is a SEPARATE concern (D-21), designed in T-3.6.** T-3.3 proves *who is
+scanning* (operator badge/PIN → `custrecord_se_operator`); it does **not** prove *which device* is
+talking to the endpoint. The per-device credential (issued at provisioning, checked first, revocable,
+rate-capped) is D-21 / T-3.6 — **do not merge device identity into the operator/session-token model
+here.** `custrecord_op_allowed_locations` is **WMS-enforced** (D-19 confirmed — one fixed Execute-As
+role): validate the selected location against it at login and bind it into the session token.
+
 **Acceptance**
 - [ ] GIVEN a POST with **no or an invalid session token**, THEN it is rejected and **no event is created** *(the required negative test)*.
+- [ ] GIVEN a login selecting a location **not** in the operator's `allowed_locations`, THEN it is refused; the issued token binds only an allowed location. *(D-14/D-19)*
 - [ ] GIVEN an expired or tampered (bad-HMAC) token, THEN it is rejected with a distinct code.
 - [ ] GIVEN an operator ID for a deactivated `customrecord_wms_operator`, WHEN a scan is posted, THEN it is rejected.
 - [ ] GIVEN the operator record, THEN the PIN is stored **hashed** — no plaintext PIN exists anywhere.
@@ -186,6 +223,11 @@ success renders in < 150 ms. Barcode symbologies and scan-to-field mapping defin
 Explicit sad paths: wrong bin scanned, wrong SKU, wrong lot, insufficient quantity, unknown barcode.
 Large-touch-target, glove-friendly layout.
 
+**The served bundle carries NO secrets (D-19).** The GET response is **public** (Available-Without-Login).
+It must contain **no account identifiers, no role hints, no internal URLs, and no configuration beyond
+what a public page may carry.** The HMAC secret, PIN hashes and device credentials never reach the
+browser; the app obtains only a session token *after* login. Verified by inspecting the shipped bundle.
+
 **SPA performance budget (stated ceilings, agreed with the sponsor).** The PWA is served from NetSuite
 and first-loaded over warehouse Wi-Fi on the **target rugged Android device** — the login-and-warm-up
 experience is governed by this budget and nothing else in the plan constrains it. Measure on the
@@ -204,6 +246,28 @@ These are the agreed ceilings; regressions past them fail the build (measured in
 - [ ] GIVEN the operator cannot find the stock, WHEN they select short pick, THEN a SHORT_PICK event is enqueued with quantity found and reason.
 - [ ] GIVEN the target device over warehouse Wi-Fi, THEN bundle size, cold first-load, warm-load and login-to-first-task are measured and all within the stated budget.
 - [ ] GIVEN 30 minutes of continuous use, THEN no memory growth or degradation is observed on the target device.
+- [ ] GIVEN the shipped public GET bundle is inspected, THEN it contains no account identifiers, role hints, internal URLs, secrets or configuration beyond what a public page may carry. *(D-19)*
+
+---
+
+### T-3.6 — Device credential design *(stub — D-21)*
+**Depends on:** T-3.3 · **Implements:** D-21 · *(new 2026-08-09 — requirement recorded, design deferred to Phase 3)*
+
+**Narrative**
+As a security owner, I want every device individually identified and revocable, so that the public
+ingest endpoint cannot be driven by anything the fleet does not include.
+
+**Requirement (recorded per D-21; the mechanism is Phase 3 design work, NOT specified here).** A
+**per-device credential** issued at provisioning, **checked as the first operation in the POST handler
+before any record load** (T-3.1), on a **cheap rejection path** that consumes minimal governance;
+**revocable per device**; with a **per-device rate cap** (distinct from F-29's per-token/per-IP caps).
+**Device identity is separate from operator identity (D-21)** — a transport credential, not the
+badge/PIN. Design choices to make in Phase 3: credential type and storage on rugged Android, rotation,
+revocation propagation, and how the cheap-reject path avoids cache/projection reads.
+
+**Acceptance** *(placeholder — completed when the mechanism is chosen)*
+- [ ] GIVEN the design, THEN a credential type, provisioning, rotation and revocation flow are documented and reviewed.
+- [ ] GIVEN a revoked device, WHEN it POSTs, THEN it is rejected first, cheaply, before any record load (measured).
 
 ---
 
@@ -244,7 +308,7 @@ counts by outcome and feeds T-9.2. **No locks are taken anywhere.**
 
 > **Mode-aware.** Aggregation logic below is independent of item tracking mode. **Writing**
 > inventory detail is delegated entirely to the ledger adapter (T-2.7) — this task contains no lot
-> field writes of its own, and no `binnumber` anywhere.
+> field writes of its own, and no bin-number field anywhere.
 
 **Narrative**
 As a finance controller, I want the Item Fulfillment to reflect exactly what was picked — including
@@ -567,6 +631,13 @@ Same flow as T-5.5 against an open Transfer Order. Lot numbers arrive with the t
 quantity, partial receipt, and discrepancy against what was shipped (raise an exception; do not
 silently accept a different quantity).
 
+**Now the destination half of a WMS-fulfilled transfer (D-22).** With TO outbound in scope, the TO this
+receives may have been **picked and shipped by the WMS itself at the source**. Confirm this path end to
+end: the source fulfilment (T-6/T-7 via `transferorder`) and this receipt are the two legs of one
+transfer, and the committer defers this receipt until the source fulfilment is `POSTED` (**F-30**).
+Whether an **in-transit** NetSuite location sits between them is **Q-36** (if so, it is a holding
+location, not a warehouse — location class).
+
 **Acceptance**
 - [ ] GIVEN an inbound Transfer Order, WHEN received, THEN an Item Receipt posts against the TO and bin state reflects the putaway.
 - [ ] GIVEN lot-tracked stock on the TO, THEN the original lot numbers are carried through without re-entry.
@@ -615,8 +686,17 @@ No per-`(item, location)` dependency graph — a global priority is sufficient, 
 than the tracking it replaces. Phase B does not begin until Phase A has drained. Within each phase
 groups still run fully parallel, so throughput is preserved.
 
+**Transfer-Order ordering exception (F-30, D-22) — the one exception to the absolute rule.** A transfer
+produces a **source fulfilment** (outbound, Phase B) and a **destination receipt** (inbound, Phase A)
+for the same stock. If both land in one cycle, Phase A would attempt the **receipt before the source
+fulfilment** — which cannot post (nothing shipped yet; forcing it drives the source negative, F-25).
+So **within Phase A, a TO receipt whose corresponding source TO fulfilment is not yet `POSTED` is set
+`DEFERRED` and retried next cycle — never `FAILED`** (reuses the T-4.7 deferral path). This is the only
+place inbound waits on outbound, and it is bounded to the two legs of one transfer.
+
 **Acceptance**
 - [ ] GIVEN stock received and picked within the same minute, WHEN the cycle runs, THEN the Item Receipt posts in Phase A and the fulfillment succeeds in Phase B.
+- [ ] GIVEN a **TO receipt** committed in the same cycle as its **unposted source TO fulfilment**, WHEN Phase A runs, THEN the receipt is set `DEFERRED` (not FAILED); WHEN the source fulfilment reaches `POSTED` (a later cycle), THEN the receipt posts. *(F-30/D-22)*
 - [ ] GIVEN a cycle with both inbound and outbound events pending, THEN no outbound posting occurs until every inbound posting has completed or been accounted for.
 - [ ] GIVEN only outbound events pending, THEN Phase A completes trivially and Phase B runs without added latency.
 - [ ] GIVEN many unrelated events within a phase, THEN they process in parallel with no throughput loss attributable to the sequencing rule.
