@@ -30,18 +30,22 @@ silent scope reduction as a defect, not an optimisation.
 version.*
 
 1. **`customrecord_wms_bin_state` is the operational truth of a bin, not `inventorybalance`.** The
-   ledger lags by the event queue (up to 5 min) and is wrong by design during that window. Never
-   validate a scan against `inventorybalance`, and never cache bin contents alongside the
-   projection. (F-01, AD-03)
+   ledger lags by the event queue **by a measured window** (established in T-12.1, not an assumed
+   "5 minutes" — the committer is triggered on demand, AD-20/PF-07/PF-08) and is wrong by design during
+   it. Never validate a scan against `inventorybalance`, and never cache bin contents alongside the
+   projection. The bin-state write is `record.load`+`save` (conflict-detecting, PF-11/PF-12), never
+   `submitFields`; a `RCRD_HAS_BEEN_CHANGED` conflict is retried, then raised — **no accepted
+   lost-update window** (AD-03, D-27). (F-01, AD-03)
 2. **Bin rules come from the bin's policy, never from a hardcoded type check.** No
    `if (binType === 'UNIT' || binType === 'BULK')` anywhere. Staging, receiving and QC bins are
    legitimately mixed-SKU. (F-18, AD-14)
 3. **Never perform a saved search on the ingestion success path.** Idempotency uses the record's
    standard **`externalid`** (= client UUID), which **is** platform-enforced unique (D-12) — the
    ingestion **Suitelet** sets `externalid` and attempts the create; a duplicate fails at the platform
-   and is caught (no pre-read, no search). The **committer** additionally dedupes by UUID (keep first,
-   rest `SUPERSEDED`) as a safety net. Custom text fields have no uniqueness — only `externalid` does.
-   Bin state is a record lookup by internal ID. (F-08, AD-04, D-12)
+   with **`UNIQUE_RCRD_ID_REQD`** (PF-13, **not** `DUP_CSTM_RCRD_ENTRY`) and is caught (no pre-read, no
+   search). The **committer** additionally dedupes by UUID (keep first, rest `SUPERSEDED`) as a safety
+   net. Custom text fields have no uniqueness — only `externalid` does. Bin state is a record lookup by
+   internal ID. (F-08, AD-04, D-12)
 4. **Never call `record.transform` synchronously from a Suitelet or RESTlet.** All ledger writes go
    through the Map/Reduce committer. One `record.transform` per sales order, ever. (F-15, AD-01)
 5. **Never build a group key by string concatenation.** Handlers return key **objects**, serialised
@@ -69,25 +73,38 @@ version.*
     in the WMS. No Bin Management feature, no Bin Transfer record type, no bin field on any
     inventory detail line. Bin movements post **nothing** to NetSuite. (F-19, AD-16, D-07)
 14. **Item tracking mode is per item, resolved from the item cache — never an account-level flag.**
-    **PLAIN or LOT only** — serial is out of scope (D-08) and a serialised item must be *rejected
-    with an explicit exception*, never posted on a guess. Mixed-mode orders are normal. All of it
-    goes through `wms_lib_ledger_adapter.js`. (AD-16)
+    **Tracking mode IS the record type, not a field (PF-14):** the cache resolves `recordtype`
+    (`inventoryitem`/`lotnumberedinventoryitem`/`serializedinventoryitem` + the assembly equivalents) to
+    PLAIN / LOT / SERIAL. **PLAIN or LOT only** in scope — serial is out (D-08); a serialised recordtype
+    must be *rejected with an explicit exception*, never posted on a guess. Mixed-mode orders are normal.
+    All of it goes through `wms_lib_ledger_adapter.js`. (AD-16, D-27)
 15. **Never allocate stock NetSuite has not committed to that order.** Wave eligibility filters on
     committed quantity; picked quantity per line may not exceed it. The WMS refines NetSuite's
     commitment, it does not replace it. Getting this wrong ships one customer's stock to another
     while the totals still look right. (F-22, AD-17)
 16. **Post transactions dated by scan time, not commit time.** A pick scanned at 23:58 must not land
-    in next month's period because the queue took six minutes; if that period has closed it cannot
-    post at all. Post current **and raise `CLOSED_PERIOD_POSTING`**. (F-23, AD-17)
+    in next month's period because the queue took six minutes. Posting period derives from `trandate`;
+    backdating within an *open* period is permitted (PF-24). **This is now a PRE-CHECK, not a caught
+    failure:** the committer reads `closed` on the `accountingperiod` record (PF-24) and decides before
+    posting; if the scan-time period is closed it raises `CLOSED_PERIOD_POSTING`. `CLOSED_TRAN_PRD` is
+    kept only as a backstop. **Multi-Book caveat (PF-25):** with Extended Accounting Period Close the
+    shared `closed` flag is true only when closed in *all* books, so the pre-check must inspect
+    book-specific status if Multi-Book is enabled (Sheet C). (F-23, AD-17, D-27)
 17. **Never write costing logic.** NetSuite runs costing. The WMS supplies quantity, date and lot and
     has no opinion about valuation. No event ordering exists for costing purposes. (D-11, AD-17)
 18. **Inbound posts before outbound, every cycle.** Two phases: all receipts, then all fulfillments.
     Global priority, not a per-item dependency graph. **One exception (F-30, D-22): a Transfer Order
     receipt whose source TO fulfilment is not yet `POSTED` is set `DEFERRED` and retried — never
     `FAILED` — because the destination receipt cannot precede its own source leg.** (F-24, F-30, AD-18)
-19. **The WMS may go negative; NetSuite may not.** An outbound posting NetSuite cannot satisfy is
-    set `DEFERRED` and retried — **never `FAILED` on first attempt.** Deferred is legitimate work in
-    the wrong sequence; failed needs a human. Keep them distinct or the exception queue becomes
+19. **The WMS may go negative; the WMS must not let NetSuite go negative.** Core NetSuite *permits*
+    negative inventory (PF-22) — prevention lives in the Enhanced Validations SuiteApp, which this
+    account may not have installed, so **the platform will not enforce this for us.** The committer
+    therefore **pre-checks availability and sets `DEFERRED` on its own judgement (proactive, not a caught
+    rejection)**. Asymmetry by tracking mode (PF-22): serial/lot items genuinely refuse (`NOT_IN_INVT`,
+    `NUM_ITEMS_GRTR_THAN_QTY`) — kept as a catch-and-defer backstop; **plain items post negative if not
+    pre-checked** — so the WMS pre-check is the *only* control for them. An outbound NetSuite cannot
+    satisfy is set `DEFERRED` and retried — **never `FAILED` on first attempt.** Deferred is legitimate
+    work in the wrong sequence; failed needs a human. Keep them distinct or the exception queue becomes
     noise. (F-25, AD-18)
 20. **A bin is EMPTY when `custrecord_bs_item` is cleared — not when quantity equals zero.** Never test
     emptiness with a float comparison: `custrecord_bs_qty` is a Decimal, and UOM conversion or partial

@@ -27,6 +27,18 @@ or an operator action **carries a mandatory Location** and every operational que
 - The **item cache** (AD-02, `WMS_ITEM_*`) and the **event-handler registry** (AD-15) — item tracking
   mode and handler descriptors are global.
 
+> **Item cache resolves `recordtype`, not a field (PF-14, D-27).** Item tracking mode **is the record
+> type**, not a flag on a shared item record. Six types: `inventoryitem`, `lotnumberedinventoryitem`,
+> `serializedinventoryitem`, and the assembly equivalents `assemblyitem`, `lotnumberedassemblyitem`,
+> `serializedassemblyitem`. The cache reads **`recordtype`** and maps it to **PLAIN / LOT / SERIAL** (a
+> serialised type is in-scope only to be *rejected*, D-08). No task may read a "tracking-mode field" —
+> there isn't one.
+>
+> **`N/cache` constraints (PF-15).** TTL **≥ 300 s**; **no persistence guarantee** (early eviction under
+> memory pressure); value **≤ 500 KB**; key **≤ 4 KB**. The cache **needs a loader function and must
+> tolerate a cold miss on every call**; a payload over 500 KB must be **chunked**. Applies to the item
+> cache and the config cache.
+
 ---
 
 ## 3.1 `customrecord_wms_scan_event` — append-only event log
@@ -35,7 +47,7 @@ or an operator action **carries a mandatory Location** and every operational que
 |---|---|---|
 | **`externalid`** *(standard field)* | — | **= client UUID v4. Platform-enforced UNIQUE (D-12) — the primary idempotency guard (AD-04 layer 1).** Ingestion sets it and attempts the create; a duplicate fails at the platform |
 | `custrecord_se_event_id` | Free-Form Text | Mirrors the UUID in `externalid` for convenient search/grouping (custom fields are easy to filter on). **Not itself unique** — the uniqueness lives on `externalid`. The committer groups by UUID as a dedupe safety net (AD-04 layer 2) |
-| `custrecord_se_type` | List/Record | PICK, PACK, REPLEN_MOVE, BIN_TRANSFER, COUNT, **SHORT_PICK, OVERRIDE, PUTAWAY, EXCEPTION, RECEIPT_PO, RECEIPT_TO, RECEIPT_WO** *(inbound added per D-09)* |
+| `custrecord_se_type` | List/Record | PICK, PACK, REPLEN_MOVE, BIN_TRANSFER, COUNT, **SHORT_PICK, OVERRIDE, PUTAWAY, EXCEPTION, RECEIPT_PO, RECEIPT_TO, RECEIPT_WO** *(inbound added per D-09)*, **`LINE_FREEZE`** *(new, AD-21/PF-26 — emitted at wave release; the committer sets `noautoassignlocation` on the SO lines. Handler registered per T-2.6b; dormant if `AUTOLOCATIONASSIGNMENT` is off)* |
 | `custrecord_se_operator` | List/Record → Employee | |
 | `custrecord_se_wave` | List/Record → Wave Pick | |
 | `custrecord_se_order` | List/Record → Transaction | |
@@ -244,6 +256,12 @@ tote capacity, SKU fan-out cap, **wave ship-by bucketing boundaries** (the time 
 uses to derive `shipByBucket` — section 3.12), M/R batch size, event retention days, replenishment scan
 interval, ingestion advisory-check toggle, dashboard refresh seconds, session-token TTL, rate-limit
 thresholds. *(`lock TTL seconds` removed — locks withdrawn, D-12.)*
+
+**Added 2026-08-11 (D-27):** **ingest batch size** (default **50**, measured/adjusted in T-12.1 — F-29/PF-02);
+**bin-state conflict-retry attempt count** (AD-03/PF-11); **committer deployment-pool size** (AD-20/PF-08);
+**`custrecord_cfg_kill_switch`** (a boolean read at the start of every committer execution — the only
+reliable pause, AD-22/PF-29); **governance-reconciliation tolerance** (default ±25%, T-12.1/D-23). All
+global-defaults + optional per-location override.
 
 **Not a single global row (D-14).** There is a **global-defaults row** plus **optional per-location
 override rows** (`custrecord_cfg_location` — blank on the global row, set on an override). **Precedence:

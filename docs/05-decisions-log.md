@@ -759,6 +759,53 @@ not left implicit**:
 **Affects:** `wms_lib_clustering.js` (contract note), T-6.2 (supervisor-visible skip reporting), F-10.
 Relates to the order-projection contract (section 3.12, data model).
 
+## D-27 — Platform-facts pass: verified NetSuite behaviour recorded and applied · *accepted 2026-08-11*
+
+A documentation-grounded pass established the NetSuite platform behaviours the design was assuming or
+guessing, now recorded canonically in **`docs/08-platform-facts.md`** (`PF-01`..`PF-30`). **Every design
+document cites `PF-nn` rather than restating platform behaviour.** The facts come from NetSuite
+documentation, **not** from the project developer and **not** from the live account, so each is either
+**CONFIRMED** (documented, safe to design against) or **SANDBOX-PENDING** (must be proven in *this*
+account's sandbox first — discharged by the new **T-0.8**; its **T1** gates all of Phase 1).
+
+What this pass changed (each detailed in its own document):
+- **AD-03 rewritten** — optimistic concurrency with retry-on-`RCRD_HAS_BEEN_CHANGED`, **no accepted
+  lost-update window**; bin-state write uses `record.load`+`save` (6u, conflict-detecting), never
+  `submitFields` (2u, silently last-write-wins). PF-11/PF-12.
+- **AD-04 error constant corrected** — idempotency signal is **`UNIQUE_RCRD_ID_REQD`**, not
+  `DUP_CSTM_RCRD_ENTRY`. PF-13.
+- **F-29 rewritten with real pool numbers** (PF-01..PF-05); every mitigation now mandatory; batch size a
+  measured config value (default 50); **cache warm moves off the pool to a File Cabinet file**.
+- **Q-35 RESOLVED affirmatively** — File Cabinet Available-Without-Login cache warm is the **required**
+  design (zero integration concurrency, PF-05), not optional. The shift-start burst is otherwise
+  unsurvivable at the pool sizes in PF-01.
+- **AD-20** committer on-demand triggering + deployment pool + the lag window restated as a **measured**
+  figure (PF-07/PF-08); invariant #1's "up to 5 minutes" was wrong.
+- **AD-21** ALA line-freezing routed through the committer as a new event type (PF-26); **AD-22** kill
+  switch is a config flag, not deployment status (PF-29).
+- **Invariant #16** closed-period becomes a **pre-check** (PF-24/PF-25); **invariant #19** reworded to
+  *"the WMS must not let NetSuite go negative"* — the platform will not enforce it for us (PF-22).
+- **Ledger adapter (T-2.7) unblocked** — all shapes CONFIRMED (PF-16..PF-21); the "pending developer
+  answer" markers are removed.
+- **Item cache** resolves **`recordtype`**, not a tracking-mode field (PF-14); `N/cache` constraints
+  recorded (PF-15).
+
+**Affects:** docs/08 (new), AD-03, AD-04, AD-19, AD-20/21/22, F-23, F-29, F-30, invariants #1/#16/#19,
+T-2.7, T-2.4, new T-0.8/T-0.9, Phase-4 committer tasks, register (Q-35 closed, new Sheet B/C rows).
+
+## D-28 — Receipt-quarantine (RQD) isolation stays an Inventory Transfer, not a Transfer Order · *accepted 2026-08-11*
+
+A documented recommendation favoured a **Transfer Order** for the location-to-location move that isolates
+non-fulfillable receipts within one subsidiary. **Rejected**, reasoning recorded so it is not revisited:
+the RQD move is **same-roof, same-minute, immediately after receipt**; a Transfer Order imposes approval,
+fulfilment, in-transit and receipt steps, and since **a TO receipt cannot precede its fulfilment
+(`CANT_RCEIV_BEFORE_FULFILL`, PF-19)** the isolation could not complete within one committer cycle. The
+usual objection to an **Inventory Transfer** — that exact serials/lots must be known at entry — **does not
+apply here, because the operator has already scanned them.** RQD isolation is therefore an **Inventory
+Transfer** (PF-20).
+
+**Affects:** T-2.7 (Inventory Transfer shape), the inbound/QC isolation path (Phase 5B), `06-netsuite-boundary.md`.
+
 ---
 
 ## Superseded

@@ -85,26 +85,32 @@ no collections, no child records.
 right now, including work the ledger has not caught up to. `inventorybalance` remains the
 **financial** truth. Neither is subordinate; they answer different questions and are reconciled.
 
-**Optimistic version check, not an atomic compare-and-set** *(amended 2026-08-09 — wording correction)*:
-SuiteScript offers no atomic compare-and-set. The ingestion update is a **read-check-write**: read
-`custrecord_bs_version`, evaluate, then write with the incremented version. Two ingestion writes to
-the same bin that interleave between another's read and write can therefore **lose an update** — the
-window is real, not eliminated. It is narrowed by re-reading and re-evaluating once on a detected
-mismatch, not closed.
+**Optimistic concurrency via the platform's own conflict detection — no accepted lost-update window**
+*(rewritten 2026-08-11 per D-27; supersedes the read-check-write-with-accepted-loss design)*. The earlier
+version accepted a real lost-update window on the ingestion path and leaned on nightly reconciliation to
+cover it. **That is withdrawn.** NetSuite **already detects the conflict for us**: a `record.save` throws
+**`RCRD_HAS_BEEN_CHANGED` (PF-11)** when the record changed between load and save. The bin-state update is
+therefore:
 
-**The residual risk is bounded and accepted, by design — do not build a heavier primitive to close it:**
+1. **`record.load` → modify → `record.save`.** Catch `RCRD_HAS_BEEN_CHANGED`, **re-read, re-evaluate the
+   bin policy against the fresh state, retry.** The attempt count is bounded by a `customrecord_wms_config`
+   value. **On exhaustion, raise a `customrecord_wms_exception` — never silently proceed** (AD-11).
+2. **The write MUST use `record.load` + `record.save` (6 units, PF-12), not `record.submitFields`
+   (2 units).** `submitFields` on an inline-editable field **bypasses record validation and therefore
+   bypasses conflict detection — it silently last-write-wins.** This is stated explicitly, with the unit
+   cost, so nobody "optimises" the 6-unit load+save down to a 2-unit `submitFields` later and reopens the
+   race. `custrecord_bs_version` is retained as a human-readable monotonic marker, but the *authority* for
+   conflict detection is the platform's, not our version compare.
 
-- The window exists **only on the ingestion path.** Bin-affecting commit work is **single-threaded
-  through one Map/Reduce queue** (D-12, single-threaded bin-state settlement), so there is no
-  machine-machine race there.
-- On ingestion the colliding parties are two operators, and **D-01 rules operator-to-operator
-  collision on a directed floor not a credible risk.** A lost update here needs two operators writing
-  the same bin in the same sub-second window.
-- **Nightly reconciliation (T-8.3) is the backstop** — a lost update surfaces as projection-vs-ledger
-  divergence and is caught within a day.
+**There is no longer an accepted lost-update window on the ingestion path.** A concurrent write does not
+lose an update — it throws, retries against fresh state, and either succeeds or raises an exception. The
+old bounded-and-accepted-window argument (and its appeal to D-01) is deleted. **T-8.3 reconciliation
+remains a backstop for *physical* divergence** (a scan that never happened, stock moved without a scan) —
+**not** cover for a software race, which no longer exists.
 
-A distributed lock or a heavier concurrency primitive on the ingestion path would re-introduce exactly
-the cost D-01 removed, to close a window the backstop already covers. It is deliberately not built.
+No distributed lock is needed or built: commit-side bin work is still single-threaded through one
+Map/Reduce queue (D-12), and ingestion-side concurrency is handled by the platform's conflict detection
+above.
 
 ## AD-04 — Two-layer idempotency: `externalid` primary, committer dedupe safety net *(rewritten per D-12)*
 
@@ -112,17 +118,20 @@ Custom fields have no value-uniqueness constraint, but the record's **standard `
 **is** platform-enforced unique (D-12). Idempotency uses it, with a committer safety net:
 
 - **Layer 1 — `externalid` = client UUID (primary guard).** Ingestion sets `externalid` to the scan's
-  UUID and attempts the create. A duplicate UUID **fails at the platform** (unique `externalid`) and is
-  caught → return success/idempotent. No pre-read, no hot-path search.
+  UUID and attempts the create. A duplicate UUID **fails at the platform with `UNIQUE_RCRD_ID_REQD`
+  (PF-13)** and is caught → return success/idempotent. No pre-read, no hot-path search. **The signal is
+  `UNIQUE_RCRD_ID_REQD`, NOT `DUP_CSTM_RCRD_ENTRY`** — the latter is a *duplicate name* error raised only
+  when "Require Unique Names" is set on the record type, a different condition, and must not be caught as
+  the idempotency signal.
 - **Layer 2 — committer-side dedupe (safety net).** When the committer groups events (AD-06) it groups
   by UUID first: keep the earliest, mark the rest **`SUPERSEDED`**, post from the survivor. So even if a
   duplicate ever lands (e.g. an `externalid` write path that bypassed layer 1), it never becomes a
   duplicate **ledger posting**.
 
 ```
-ingest:  create with externalid = UUID → { status:'SUCCESS', eventId }
-         catch DUP_RECORD (externalid)  → { status:'SUCCESS', idempotent:true }   // safe retry
-         catch other platform error     → { status:'ERROR', code, message, retryable:true|false }
+ingest:  create with externalid = UUID       → { status:'SUCCESS', eventId }
+         catch UNIQUE_RCRD_ID_REQD (externalid)→ { status:'SUCCESS', idempotent:true }   // safe retry (PF-13)
+         catch other platform error           → { status:'ERROR', code, message, retryable:true|false }
 
 commit:  group by UUID → keep first, mark rest SUPERSEDED → post once   // safety net
 ```
@@ -497,3 +506,51 @@ re-assertion (F-03) and land in the exception queue; they never post. This is wh
 different roles on different reachability, and why the ingest role holds **no** transaction permission
 (T-1.4). Device auth (D-21) and rate limiting (F-29) reduce the *volume* of injectable noise; AD-19
 bounds its *worst case*.
+
+**SuiteQL interaction — a least-privilege role can silently return empty (PF-06).** `SuiteQL` **enforces
+role permissions**, so any component running under the least-privilege Execute-As role that issues a
+SuiteQL query may get **empty results** where a broader role would not — an availability bug that reads as
+"no data", not as an error. Rule: **any component using SuiteQL must state which role it runs under, and
+that role must hold *View* permission on every record type the query touches.** This is an acceptance
+criterion wherever SuiteQL is proposed. On hot paths prefer `search.lookupFields` (1 unit) over SuiteQL
+(10 units) anyway (PF-06); reserve SuiteQL for multi-table projections and dashboards.
+
+## AD-20 — Committer triggering: on-demand plus a deployment pool, and a measured lag window *(new, per D-27; PF-07/PF-08)*
+
+A **Scheduled** Map/Reduce cannot run more often than **every 15 minutes (PF-07)**, so invariant #1's old
+"lags by up to 5 minutes" was simply wrong. The committer is triggered **on demand**, not merely scheduled:
+
+- **The ingestion Suitelet triggers the committer via `task.MapReduceScriptTask`**, passing the `scriptId`
+  and **omitting `deploymentId`** so NetSuite routes to an **idle** deployment (PF-08).
+- **A pool of committer deployment records, all set `Not Scheduled`.** NetSuite cannot submit to a
+  deployment that is already running, so the pool provides concurrency. **Pool size is a documented,
+  configured number, not an accident.**
+- **One scheduled deployment at the 15-minute floor** as a **safety-net sweep** for anything the
+  on-demand path missed after an interruption.
+- **Invariant #1's staleness window is restated as a MEASURED figure**, established in **T-12.1** — not an
+  assumed constant. The projection is still the operational truth; only the number is empirical.
+
+## AD-21 — Automatic Location Assignment line-freezing, routed through the committer *(new, per D-27; PF-26)*
+
+**Automatic Location Assignment can reassign a sales-order line's location after approval (PF-26)**, which
+races a wave the WMS has already released against the original location. The mitigation is the line-level
+**`noautoassignlocation`** flag. But **setting it writes to the sales order**, and *all NetSuite writes go
+through the committer* (invariant #4 / AD-01) — we do **not** carve an exception. Instead:
+
+- **Wave release emits a new event type** (a line-freeze event); the **committer processes it** and sets
+  `noautoassignlocation` on the affected lines, inheriting the **same optimistic-concurrency retry**
+  (AD-03) as every other write.
+- The event type is **registered as a handler** in the declarative registry (AD-15). The registry module
+  is carved-out and **must not be edited here** (D-23) — the handler definition and its tests are recorded
+  as task **T-2.6b** for its own pass.
+
+Whether this is needed at all depends on `AUTOLOCATIONASSIGNMENT` actually being on (SANDBOX-PENDING,
+PF-26/PF-27); if the feature is off in this account, the event type is defined but dormant.
+
+## AD-22 — The kill switch is a config flag, not deployment status *(new, per D-27; PF-29)*
+
+**A script deployment record cannot be edited while that script is executing (PF-29).** A committer that
+runs continuously therefore **cannot be reliably paused at its deployment record during an incident** —
+precisely when a pause is needed. So the **kill switch is a flag on `customrecord_wms_config`, read at the
+start of every committer execution**; when set, the execution exits cleanly without posting. This is
+recorded against **C4** (environment/runbook) and the T-0.2 config record.

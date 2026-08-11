@@ -408,15 +408,21 @@ Worse: if the period has been **closed** in the interim, the transaction cannot 
 NetSuite will reject it outright. That is not a preference, it is a hard stop, and it turns a
 six-minute queue delay into a stuck event.
 
-**Correction (AD-17):**
+**Correction (AD-17), now a PRE-CHECK not a caught failure (updated 2026-08-11 per D-27 / PF-24):**
 
-- Post transactions dated by **scan time**, not commit time, whenever that period is open. NetSuite
-  then costs it as of the correct date without the WMS having any opinion about how.
+- Post transactions dated by **scan time**, not commit time. Posting period **derives from `trandate`**,
+  and backdating within an *open* period is permitted (PF-24), so scan-time dating works as designed;
+  align the posting period to the scan date to avoid `DATEPERIODMISMATCH`.
+- **A script can read `closed` on the `accountingperiod` record (PF-24), so the committer DECIDES IN
+  ADVANCE** rather than catching a save failure. Where the scan-time period is open → post to it. Where
+  it is **closed** → post to the current period **and raise `CLOSED_PERIOD_POSTING`**. The posting error
+  **`CLOSED_TRAN_PRD`** is kept only as a backstop.
+- **Multi-Book caveat (PF-25):** with Extended Accounting Period Close the shared `closed` flag is true
+  only when the period is closed **in all books**, so a partially-closed period reads as open and the
+  save still fails. **If Multi-Book is enabled the pre-check must inspect book-specific status** — a new
+  **Sheet C** question (is Multi-Book enabled?).
 - **Period-close drain (T-11.4):** the queue is drained and verified empty before a period closes —
   a documented, monitored finance procedure rather than an informal habit.
-- Where the scan-time period has already closed, post to the current period **and raise a
-  `CLOSED_PERIOD_POSTING` exception**, so finance sees it rather than finding it in a variance
-  report.
 
 ### F-25 · S2 · Negative inventory is legitimate in the WMS and forbidden in NetSuite → `T-4.7`, `T-5.8`, `T-2.3`
 
@@ -547,25 +553,36 @@ miss D-14 introduced.
 
 *Raised 2026-08-09, arising from D-19.*
 
-Anonymous Suitelets share the account's **RESTlet / web-services concurrency pool** with every existing
-integration. Two client behaviours are **burst modes** and are unthrottled in the current plan — either
-can exhaust the shared pool and starve scan ingestion:
+*Rewritten with real platform numbers 2026-08-11 per D-27 — see `08-platform-facts.md` PF-01..PF-05.*
+
+Anonymous Suitelets share the **account-wide Integration concurrency pool** with RESTlets and web
+services (PF-01). **The pool is small:** base by tier is **Standard 5, Premium 15, Enterprise 20,
+Ultimate 20**, **+10 per SuiteCloud Plus licence**. **Sixty handhelds may be contending for as few as
+five slots.** Two client behaviours are burst modes that will exhaust it and starve scan ingestion:
 1. **Reconnect flush** — many devices returning from a dead zone at once, each draining its queue.
 2. **Shift-start cache warm** — the whole floor warming per-location caches within the same few minutes.
 
-**Binding design constraints (recorded on T-3.2 / T-3.4):**
-- **Batched POSTs — N events per request, not N requests.** Max batch size is a
-  `customrecord_wms_config` value, **bounded by the 1,000-unit governance budget with headroom**;
-  **measure and record actual governance units per event** so the bound is real, not guessed.
+**At these pool sizes every mitigation below is MANDATORY, not advisory:**
+- **Batch size is derived from governance, not guessed.** A Suitelet request has **1,000 units (PF-02)**;
+  a scan event costs roughly **2 (create) + ~1 per validation lookup**. Batch size is a
+  `customrecord_wms_config` value, **default 50**, **required to be measured in T-12.1 and adjusted.**
+  Record the trade-off: larger batches are cheaper per event but **widen the blast radius of a failed
+  request and grow the payload.**
 - **One in-flight request per device, ever.**
-- **Jittered reconnect and jittered cache warm** — randomised delay so devices do not synchronise.
-- **The Suitelet returns a distinguishable *busy* response, and the client treats it as
-  retry-with-backoff, never as a failed event.** *A concurrency rejection is not an exception* — it must
-  never reach the exception queue.
+- **Jittered reconnect** (and jittered cache warm, though see below).
+- **Two rejection paths, both handled as retry-with-backoff, neither as a failed event.** A Suitelet
+  **cannot set a non-200 status (PF-03)**, so an application-level *busy* signal rides in a **200 body**;
+  but NetSuite itself returns **HTTP 429 `EXCEEDED_MAX_CONCUR_RQST` (PF-04)** with no body of ours when
+  the pool is exhausted. The client treats **both** as retry-with-backoff; *a concurrency rejection is
+  never an exception* and never marks an event `FAILED`.
+- **The cache warm moves OFF the pool entirely** — served as a File Cabinet Available-Without-Login file
+  (PF-05, zero integration concurrency). This is the required design (Q-35→D-27), not an optimisation;
+  at the pool sizes above the shift-start burst is otherwise unsurvivable.
 
-Sizing depends on **Q-34** (the account's Integration Governance limit and existing consumers — answered
-as an assumption: the WMS has the pool to itself, but that expires the day another integration is added).
-A larger pool raises the ceiling; it does **not** change burst behaviour, so none of the above relaxes.
+**Sizing turns on one unknown:** the account's **service tier and SuiteCloud Plus licence count**
+(new **Sheet C** question). Everything here sizes off that number and it is currently unknown; the old
+Q-34 "WMS has the pool to itself" assumption does not change burst behaviour and does not relax any
+mitigation.
 
 ### F-30 · S2 · Transfer-order ordering inverts invariant #18 → `T-5.8`, `T-4.7` *(amends AD-18)*
 

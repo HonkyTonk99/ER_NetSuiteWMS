@@ -94,6 +94,21 @@ attempting a posting that will fail confusingly (D-08).
 
 **Inbound postings are real financial events** and must reach the ledger, unlike bin movements.
 
+> **All shapes CONFIRMED against the platform (D-27, `08-platform-facts.md` PF-16..PF-21).** Inventory
+> detail is the `inventorydetail` subrecord's `inventoryassignment` sublist — `receiptinventorynumber`
+> (in) / `issueinventorynumber` (out) + `quantity`; **no bin-number field** (invariant #13). Standard mode
+> works, including on a transformed record. **Item Fulfilment cannot span locations — one per (order,
+> location)** (PF-18). **`transferorder`→`itemfulfillment` transform is supported**; the TO **receipt
+> transforms from the transfer order**, cannot precede fulfilment (`CANT_RCEIV_BEFORE_FULFILL`, F-30), and
+> `PARTIAL_FULFILL_RCEIV_DISALLWD` applies only cross-subsidiary (Q-52). Inventory Adjustment/Transfer
+> field lists are in T-2.7; **`unitcost` is ignored on negative adjustments** (invariant #17, PF-21).
+>
+> **Receipt-quarantine (RQD) isolation is an Inventory Transfer, not a Transfer Order (D-28).** The move
+> that isolates a non-fulfillable receipt is same-roof and same-minute; a Transfer Order's approval /
+> fulfil / in-transit / receipt steps cannot complete in one committer cycle (a TO receipt cannot precede
+> its fulfilment, PF-19), and the usual Inventory-Transfer objection — needing exact lots/serials at entry
+> — does not apply because the operator already scanned them.
+
 **Reconciliation contract** (T-8.3) follows directly:
 
 - For every item and location: `SUM(WMS bin quantities)` **must equal** NetSuite quantity on hand.

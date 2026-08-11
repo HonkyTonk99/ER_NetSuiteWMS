@@ -94,11 +94,26 @@ target — the FRD says "purges or archives", which is not a specification; the 
 be decided and built first. Never purge PENDING, PROCESSING, FAILED, or any event linked to an open
 exception. Report rows archived and purged per run.
 
+**Scale and platform limits (PF-10, PF-30).** Custom record types scale to millions of rows, but
+**non-indexed filters degrade first (PF-30)**, and the scan-event table grows without bound. Define
+explicitly: **what is kept hot** (recent + open-exception-linked), **what is archived**, and **what the
+archive is for** (audit/lot-traceability retrieval, Q-09). The archiving job is itself a Map/Reduce and is
+**constrained by the 200 MB persisted-data ceiling (PF-10)** — it must **chunk the backlog by date or
+batch boundary** so a single run's persisted payload cannot approach the ceiling.
+
+**Hot-path fields must be index-backed (PF-30, SANDBOX-PENDING).** Every field used as a hot-path filter
+(status, location, UUID, scan time) must carry the **`Indexed`** setting. Whether that setting exists and
+how it is represented in SDF is **SANDBOX-PENDING** — proven in **T-0.8 (T4)**. If it exists: assert it in
+the SDF XML for every hot-path filter field and **add a CI check that the assertion is present**, turning
+"hot-path searches must be index-backed" from an instruction into something the build enforces. If it does
+not exist: record that and propose an alternative (e.g. a documented saved-search backing + review).
+
 **Acceptance**
 - [ ] GIVEN POSTED events older than the retention period with no open exception, WHEN the job runs, THEN they are archived to the agreed target and then deleted.
 - [ ] GIVEN a FAILED or exception-linked event of any age, THEN it is never purged.
 - [ ] GIVEN an archived event, THEN it is retrievable by UUID for audit within the agreed timeframe.
-- [ ] GIVEN each run, THEN counts archived, purged and skipped are logged and reported.
+- [ ] GIVEN each run, THEN counts archived, purged and skipped are logged and reported, and the run **chunks by date/batch so persisted data stays well under 200 MB**. *(PF-10)*
+- [ ] GIVEN the `Indexed` setting is confirmed to exist (T-0.8/T4), THEN every hot-path filter field asserts it in SDF and a **CI check fails the build if the assertion is missing**; if it does not exist, the alternative is documented. *(PF-30)*
 
 ---
 

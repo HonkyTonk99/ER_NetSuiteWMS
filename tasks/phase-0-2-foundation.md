@@ -237,6 +237,61 @@ and whether it is catchable.
 
 ---
 
+### T-0.8 — Sandbox verification of SANDBOX-PENDING platform facts
+**Depends on:** T-0.5 · **Implements:** D-27 · **Reference:** `08-platform-facts.md` SANDBOX-PENDING roster · *(new 2026-08-11)*
+
+**Narrative**
+As the delivery lead, I want the platform facts this account cannot confirm from documentation proven in
+its own sandbox, so that no code is built on an assumption the account quietly violates.
+
+**Requirement**
+Small, discrete sandbox tests, each discharging a `SANDBOX-PENDING` row in `08-platform-facts.md`. Three
+are gating and named here; the rest of the roster is worked alongside them.
+
+- **T1 — the ingestion architecture proof (GATES ALL OF PHASE 1).** An **Available Without Login**
+  Suitelet with an **Execute As Role** must **create a custom record when called while logged out**. If
+  this fails, the entire ingestion design (D-19/AD-19) is invalid. **Nothing in Phase 1 starts until T1
+  passes.**
+- **T4 — the `Indexed` custom-field setting (PF-30)** exists and has an **SDF representation**. If it
+  does, hot-path filter fields assert it in SDF XML and a CI check enforces the assertion (T-18); if not,
+  say so and propose an alternative.
+- **T6 — the preference identifiers of PF-28** (`ALLOWPERLINELOCATIONS`, `CENTRALIZEPURCHASING`, the
+  allow-date-outside-period preference) are the real ids in this account, read via `config.load`.
+
+**Acceptance**
+- [ ] GIVEN T1, WHEN an Available-Without-Login Suitelet under an Execute-As role is called logged out, THEN it creates a `customrecord_wms_*` row — and **Phase 1 remains blocked until this passes**. *(gates Phase 1)*
+- [ ] GIVEN T4, THEN the `Indexed` setting's existence and SDF representation is recorded as CONFIRMED or its absence documented with an alternative. *(PF-30)*
+- [ ] GIVEN T6, THEN the three preference identifiers are confirmed against the account, resolving the SANDBOX-PENDING mark on PF-28.
+- [ ] GIVEN every other SANDBOX-PENDING row (PF-22 SuiteApp, PF-26/27 features, PF-25 Multi-Book), THEN each is proven or its owning Sheet-C question answered before code depends on it.
+
+---
+
+### T-0.9 — Startup precondition assertion (features + preferences), self-verifying
+**Depends on:** T-0.5, T-0.8 · **Implements:** D-27 · *(new 2026-08-11; extends the Bin-Management assertion of T-0.1)*
+
+**Narrative**
+As an operator of the system, I want the app to refuse to run against a misconfigured account, so that a
+silent feature/preference drift cannot corrupt inventory before anyone notices.
+
+**Requirement**
+Extend the existing Bin-Management assertion into a full precondition check run at startup.
+- **Features via `runtime.isFeatureInEffect` (PF-27):** `BINS` OFF, `ADVBINNUM` OFF, `MULTILOCINVT` ON,
+  `AUTOLOCATIONASSIGNMENT` (record actual state — it changes behaviour, AD-21).
+- **Preferences via `config.load({ type: config.Type.COMPANY_PREFERENCES })` (PF-28):**
+  `ALLOWPERLINELOCATIONS` ON, `CENTRALIZEPURCHASING` OFF (**when ON, NetSuite forces all receipts into one
+  location and the receiving design breaks silently**), allow-transaction-date-outside-period permitted.
+- **Three states, not two.** The assertion must distinguish **enabled / disabled / identifier not
+  recognised.** A wrong preference id reads as nothing; that must **fail loudly as a configuration error**,
+  not be read as "disabled". This makes the assertion self-verifying and covers the residual doubt on the
+  exact identifiers (SANDBOX-PENDING until T-0.8/T6).
+
+**Acceptance**
+- [ ] GIVEN each required feature/preference, THEN the assertion reports enabled, disabled, or **identifier-not-recognised** distinctly — the third fails startup as a config error.
+- [ ] GIVEN `CENTRALIZEPURCHASING` ON or `MULTILOCINVT` OFF or `BINS` ON, THEN startup fails with an actionable message naming the offending setting.
+- [ ] GIVEN a mistyped preference id, THEN the assertion fails loudly rather than silently treating it as disabled.
+
+---
+
 # PHASE 1 — Data Model & Configuration
 
 ### T-1.1 — Create scan event and config records
@@ -479,8 +534,9 @@ dropped connection never double-counts a pick.
 **Requirement**
 **Layer 1 — `externalid` (primary).** `writeScanEvent(payload)` sets the record's standard `externalid`
 to the client UUID and attempts a direct create with **no pre-read** (no hot-path search). A duplicate
-UUID **fails at the platform** (`externalid` is unique, D-12) — catch the duplicate-record error and
-return `{status:'SUCCESS', idempotent:true, eventId:<existing>}`. Set server timestamp, preserve client
+UUID **fails at the platform with `UNIQUE_RCRD_ID_REQD` (PF-13, D-12)** — catch **that specific error**
+(NOT `DUP_CSTM_RCRD_ENTRY`, which is a duplicate-*name* error under "Require Unique Names") and return
+`{status:'SUCCESS', idempotent:true, eventId:<existing>}`. Set server timestamp, preserve client
 timestamp, record device ID. Classify every other error as retryable or terminal and return `retryable`
 so the client's queue can decide.
 
@@ -490,7 +546,7 @@ guarantees "no duplicate *ledger posting*" even if a duplicate row ever slips pa
 unit-testable core.
 
 **Acceptance**
-- [ ] GIVEN the same UUID written twice, WHEN the second is saved, THEN it fails at the platform on `externalid` and the writer returns `idempotent: true` — exactly one row exists.
+- [ ] GIVEN the same UUID written twice, WHEN the second is saved, THEN it fails with `UNIQUE_RCRD_ID_REQD` (not `DUP_CSTM_RCRD_ENTRY`) and the writer returns `idempotent: true` — exactly one row exists. *(PF-13)*
 - [ ] GIVEN `dedupeByEventId` over events with duplicate UUIDs, THEN it returns exactly one survivor per UUID (the earliest) and the rest flagged `SUPERSEDED` — verified by unit test with no NetSuite account.
 - [ ] GIVEN the writer runs, WHEN governance usage is measured, THEN no saved search is executed on the success path.
 - [ ] GIVEN a transient platform error, THEN the response sets `retryable: true`; given a validation error, `retryable: false`.
@@ -535,41 +591,101 @@ context from T-2.5, never as literals.
 
 ---
 
+### T-2.6a — Bound the group-key serialiser to 3,000 characters *(carved-out module change — its own pass)*
+**Depends on:** T-2.6 · **Implements:** PF-10 · *(new 2026-08-11; do NOT edit the module in this pass)*
+
+**Narrative**
+As a developer, I want the group key to be provably shorter than the Map/Reduce key ceiling, so that a
+pathological key never trips `PERSISTED_DATA_LIMIT_FOR_MAPREDUCE_SCRIPT_EXCEEDED` mid-run.
+
+**Requirement**
+A Map/Reduce **key is capped at 3,000 characters (PF-10)**. `serializeGroupKey` lives in the carved-out
+`wms_lib_event_registry.js` (D-23) — **not editable in the platform-facts pass.** This task, run on its
+own, adds a **bound + assertion** so a serialised key exceeding 3,000 chars is a caught programmer error
+(plain `Error`, `ERR_WMS_*` name — D-23 error shape), plus a unit test. The carve-out guard still forbids
+any `N/` import.
+
+**Acceptance**
+- [ ] GIVEN a group key that serialises beyond 3,000 characters, THEN `serializeGroupKey` throws a plain `Error` with an `ERR_WMS_*` name, covered by a unit test.
+- [ ] GIVEN the change, THEN `guard-carveout-imports` and `guard-src-encoding` still pass.
+
+---
+
+### T-2.6b — Register the ALA line-freeze event handler *(carved-out module change — its own pass)*
+**Depends on:** T-2.6, T-6.x (wave release) · **Implements:** AD-21 · *(new 2026-08-11; do NOT edit the module in this pass)*
+
+**Narrative**
+As a wave planner, I want a released wave's lines frozen against Automatic Location Assignment, so that
+NetSuite cannot re-home a line's location under a wave the WMS has already committed to.
+
+**Requirement**
+Per AD-21 (PF-26): wave release emits a **line-freeze event**; the committer processes it and sets
+`noautoassignlocation` on the affected sales-order lines, **through the committer** (invariant #4 — no
+write-to-SO exception) with the AD-03 optimistic-concurrency retry. The handler is **registered** in the
+declarative registry — but that module is carved-out (D-23), so **the handler definition + tests are this
+task, run on its own pass**, not an edit here. Dormant if `AUTOLOCATIONASSIGNMENT` is off (SANDBOX-PENDING).
+
+**Acceptance**
+- [ ] GIVEN a wave release, THEN a line-freeze event is emitted, committed, and `noautoassignlocation` is set on the wave's lines via the committer (never a direct SO write).
+- [ ] GIVEN the handler, THEN it is a registry registration with unit tests, and the carved-out guards still pass.
+- [ ] GIVEN `AUTOLOCATIONASSIGNMENT` off in the account, THEN the event type is defined but dormant (no-op), verified.
+
+---
+
 ### T-2.7 — `wms_lib_ledger_adapter.js` — the NetSuite boundary
-**Depends on:** T-0.1, T-2.5, T-2.6 · **Resolves:** F-19 · **Implements:** AD-16 · *(rewritten per D-07)*
+**Depends on:** T-0.1, T-2.5, T-2.6 · **Resolves:** F-19 · **Implements:** AD-16 · *(rewritten per D-07; shapes CONFIRMED and UNBLOCKED per D-27 — PF-14..PF-21)*
 
 **Narrative**
 As a developer, I want every NetSuite posting to go through one module that knows how each item is
 tracked, so that no bin ever leaks into the ledger and mixed-mode orders post correctly.
 
 **Requirement**
-The complete ledger interface, and nothing else, per `06-netsuite-boundary.md` §4:
+The complete ledger interface, and nothing else, per `06-netsuite-boundary.md` §4. **All shapes are now
+CONFIRMED against `08-platform-facts.md` (PF-14..PF-21, D-27) — the "pending developer confirmation"
+markers are removed.**
+
+**Inventory detail (all postings, PF-16):** the `inventorydetail` subrecord's **`inventoryassignment`**
+sublist — **`receiptinventorynumber`** when stock enters, **`issueinventorynumber`** when stock leaves,
+plus **`quantity`**. **The NetSuite bin-number and destination-bin-number fields are never used** (Bin Management off — invariant #13).
+**Standard mode works, including on a transformed record — dynamic mode is not required.** Per tracking
+mode (PF-17): **SERIAL** = one sublist line per serial, `quantity` exactly 1; **LOT** = one line,
+`quantity` may exceed 1 and may be fractional; **PLAIN** = no inventory detail.
 
 **Outbound:**
-- **Item Fulfillment** — location, item, quantity, plus inventory detail shaped by the line item's
-  tracking mode: none for PLAIN, lot number and quantity for LOT. **Sourced from a Sales Order OR a
-  Transfer Order (D-22)** — the same fulfilment shape, parameterised by the source transaction type.
-- **Transfer Order fulfilment (D-22)** — the source-side ship of an inter-location transfer.
-  ⚠️ **The NetSuite transform target requires developer confirmation before build** (transform a
-  Transfer Order to its fulfilment); do **not** assert the transform behaviour in this doc until confirmed.
-- **Inventory Adjustment** — count variances only, documented adjustment account.
-- **Inventory Transfer** — genuine location-to-location moves only (Q-08).
+- **Item Fulfillment** — **one per (sales order, location); a single fulfilment cannot span locations
+  (PF-18)** — confirming the AD-01 / invariant #4 amendment. Sourced from a Sales Order OR a Transfer
+  Order (D-22), the same shape parameterised by source transaction type.
+- **Transfer Order fulfilment (D-22, PF-19)** — **`transferorder` → `itemfulfillment` transform is
+  supported** (confirmed). The **receipt transforms from the transfer order**, passing the **fulfilment
+  id as an auxiliary reference** so costing links. Partial fulfil/receipt is supported **within a single
+  subsidiary**; **`PARTIAL_FULFILL_RCEIV_DISALLWD` applies only cross-subsidiary** (Q-52). Receipt is
+  capped at quantity fulfilled to date (`TRANSORD_SHIP_REC_MISMATCH`) and **cannot precede fulfilment
+  (`CANT_RCEIV_BEFORE_FULFILL` — the code F-30 keys on).**
+- **Inventory Adjustment (PF-21)** — body `subsidiary`, `account`, `adjlocation`, `trandate`; lines
+  `item`, **negative** `adjustqtyby`, `location`; lot/serial via `issueinventorynumber`. **`unitcost` is
+  ignored on negative adjustments — do not compute it** (invariant #17).
+- **Inventory Transfer (PF-20)** — body `subsidiary`, `location`, `transferlocation`, `trandate`; lines
+  `item`, `adjustqtyby`; lot/serial via `issueinventorynumber`. **This is the shape for RQD receipt
+  isolation (D-28), not a Transfer Order.**
 
 **Inbound (D-09):**
-- **Item Receipt** against a Purchase Order or Transfer Order.
+- **Item Receipt** against a Purchase Order or Transfer Order (TO receipt per PF-19 above).
 - **Work Order Completion / Assembly Build** (Q-25) for production output.
 
 **Neither:**
 - **Bin movements post nothing.** `BIN_TRANSFER`, `REPLEN_MOVE` and `PUTAWAY` update WMS state and
   create no NetSuite transaction, because stock has not changed location.
 
-Tracking mode is resolved per line from the item cache — **never** from an account-level flag.
-**Mixed-mode orders are the normal case** and one `record.transform` must handle PLAIN and LOT lines
-together. **A serialised item is rejected with an explicit out-of-scope exception** (D-08), never
-posted on a guess.
+Tracking mode is resolved per line from the item cache as **`recordtype`, not an account-level flag and
+not a field (PF-14)** — `inventoryitem`/`lotnumberedinventoryitem`/`serializedinventoryitem` (+ assembly
+equivalents) → PLAIN/LOT/SERIAL. **Mixed-mode orders are the normal case** and one `record.transform`
+must handle PLAIN and LOT lines together. **A serialised `recordtype` is rejected with an explicit
+out-of-scope exception** (D-08), never posted on a guess.
 
-**Transaction date comes from scan time, not commit time** (F-23, AD-17); where that period has
-closed, post current and raise a `CLOSED_PERIOD_POSTING` exception.
+**Transaction date comes from scan time, not commit time** (F-23, AD-17). This is a **pre-check**
+(PF-24): read `closed` on the `accountingperiod` record and decide before posting; where the scan-date
+period is closed, post current and raise `CLOSED_PERIOD_POSTING` (`CLOSED_TRAN_PRD` is the backstop). If
+Multi-Book is enabled the pre-check inspects book-specific status (PF-25, Q-51).
 
 **The NetSuite bin-number field must not appear anywhere in the codebase**, including this module. Enforced by a CI
 grep.

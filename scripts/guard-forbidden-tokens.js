@@ -31,8 +31,12 @@ const CODE_IDENTIFIERS = [
     { re: /bintransfer/i, why: "'bintransfer' — the NetSuite bin-transfer record does not exist under D-07 (the WMS BIN_TRANSFER event enum, with underscore, is fine)" },
     { re: /record\.Type\.BIN_TRANSFER/, why: 'record.Type.BIN_TRANSFER — NetSuite Bin Transfer record type does not exist under D-07' },
     { re: /custrecord_[a-z_]*bin_?number/i, why: 'a custrecord bin-number field — no bin dimension exists under D-07' },
-    { re: /issueinventorynumber/i, why: "'issueinventorynumber' with bins — the F-19 pattern; use the ledger adapter (T-2.7)" },
 ];
+// NOTE (2026-08-11, D-27/PF-16): the standalone `issueinventorynumber` rule was REMOVED. That field
+// (and `receiptinventorynumber`) is the CORRECT NetSuite inventory-detail assignment field the ledger
+// adapter must use (PF-16) — it is not a bin identifier. The F-19 anti-pattern was bins-in-inventory-
+// detail, which the binnumber / tobinnumber / custrecord_*bin_number* rules above still catch. Invariant
+// #13 (no bin dimension) remains fully enforced.
 
 // Tier 2: conceptual terms — warn only, printed for review, never blocking.
 const CONCEPTUAL = [
