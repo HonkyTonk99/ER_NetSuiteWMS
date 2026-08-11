@@ -22,9 +22,9 @@ Scan Event table (append-only, immutable except status)
    ▼
 Map/Reduce ledger committer   (SuiteCloud Plus)
    │  dedupe by UUID (keep first, rest SUPERSEDED)   ← AD-04 layer 2 (safety net)
-   │  group by ORDER (not event type); bin-affecting work on ONE queue  ← AD-05 (locks rejected, D-12)
+   │  group by (ORDER, LOCATION); bin-affecting work on ONE queue  ← AD-05 (locks rejected, D-12)
    │  RE-ASSERT invariants vs live inventory  ← authoritative
-   │  one record.transform per order
+   │  one record.transform per (order, location)  ← invariant #4 (PF-18; degenerates to per-order in one location)
    ├── success → status=POSTED, link to txn
    └── failure → status=FAILED + Exception record → supervisor queue
 ```
@@ -65,8 +65,10 @@ including a live ledger query, is behind physical reality (F-01, revised).
 TK's 1-SKU/1-batch rule is what makes this viable: bin state is four scalar fields, not a
 collection. Reading it is one lightweight record lookup; updating it is one field write.
 
-Serial numbers are **out of scope** (D-08), so bin state stays scalar for every item: four fields,
-no collections, no child records.
+Serial numbers are **in scope** (D-29). Bin state stays the **scalar quantity projection** even so — a
+serialised item's per-unit truth lives in its own record, **`customrecord_wms_serial_state`** (data model
+§3.13), tied to bin state by **invariant #22** (bin-state quantity = count of serial rows in that bin).
+Bin state is not made a collection; the serial lifecycle is a sibling record.
 
 **How it is used:**
 
@@ -383,12 +385,13 @@ receiving through the WMS:
 | In | Production output | **Work Order Completion / Assembly Build** |
 | — | **Bin movement** | **Nothing.** Stock has not changed location |
 
-**The one axis of variability is per-item, not per-account.** An item is **PLAIN** (no tracking) or
-**LOT** (batch numbered), read from the item record and cached as static data. Serial numbers are out
-of scope (D-08); a serialised item reaching a WMS-managed location is **rejected with an explicit
-exception**, never posted on a best guess. `wms_lib_ledger_adapter.js` (T-2.7) resolves each line's
-mode and shapes inventory detail accordingly. **Mixed-mode orders are normal** — one sales order can
-carry both, and one `record.transform` must handle them together.
+**The one axis of variability is per-item, not per-account.** An item is **PLAIN** (no tracking),
+**LOT** (batch numbered) or **SERIAL** (serialised) — the record type (PF-14), read and cached as static
+data. **All three are in scope (D-29).** A serialised line posts one `inventoryassignment` line per
+serial (quantity 1, PF-17) and updates `customrecord_wms_serial_state`; it is never rejected.
+`wms_lib_ledger_adapter.js` (T-2.7) resolves each line's mode and shapes inventory detail accordingly.
+**Mixed-mode orders are normal** — one sales order can carry all three, and one `record.transform`
+(per order, per location — invariant #4) must handle them together.
 
 This composes with AD-15: handlers declare a commit *intent*; the adapter renders it into what the
 item's mode requires. No account-level switch, no configuration flag, no tier.

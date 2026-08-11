@@ -6,7 +6,7 @@
 > foundation configuration of NetSuite is: Locations are enabled, and Serial/Batch numbers might be
 > enabled or might not be, and these will be defined by the item config in NetSuite."*
 
-**Extended by D-08** (serial out of scope, batch in scope), **D-09** (inbound receipt and putaway
+**Extended by D-08** (~~serial out of scope~~ **superseded by D-29 — serial IS in scope**; batch in scope), **D-09** (inbound receipt and putaway
 flow through the WMS), **D-10** (WMS primary) and **D-11** (NetSuite runs costing; the WMS may go
 negative and NetSuite may not; inbound always posts before outbound).
 
@@ -63,20 +63,20 @@ with no platform constraint fighting it. That is a cleaner place for it to live 
 Variability moves from *account-level* to *item-level*, which is how NetSuite actually models it.
 Read from the item record and cached as static data (`WMS_ITEM_<sku>`).
 
-| Mode | Item config | Inventory detail on posting | Qty semantics |
+| Mode | Item config (record type, PF-14) | Inventory detail on posting | Qty semantics |
 |---|---|---|---|
-| **PLAIN** | Neither serial nor lot | None required | Quantity is a number |
-| **LOT** | Track Lot Numbers | `inventorydetail` with lot number + qty | Quantity per lot |
-| ~~SERIAL~~ | Track Serial Numbers | — | **Out of scope (D-08)** |
+| **PLAIN** | `inventoryitem` / `assemblyitem` | None required | Quantity is a number |
+| **LOT** | `lotnumberedinventoryitem` / `lotnumberedassemblyitem` | `inventoryassignment` line, lot number + qty (may be >1 / fractional, PF-17) | Quantity per lot; a lot may split across bins (PF-31) |
+| **SERIAL** | `serializedinventoryitem` / `serializedassemblyitem` | one `inventoryassignment` line **per serial**, `receiptinventorynumber`/`issueinventorynumber`, **quantity exactly 1** (PF-17) | One physical unit; a serial is in exactly one bin (invariant #21) |
 
-**Mixed-mode orders are normal, not an edge case.** A single sales order can carry both a plain item
-and a lot item, and the commit must handle both within one `record.transform`. The adapter (T-2.7)
-resolves each line's mode from the item cache and shapes the inventory detail accordingly — no
-account-level switch, no configuration flag, no assumption.
+**Mixed-mode orders are normal, not an edge case.** A single sales order can carry PLAIN, LOT **and
+SERIAL** lines, and the commit must handle them within one `record.transform` (per order, per location —
+invariant #4). The adapter (T-2.7) resolves each line's mode from the item cache and shapes the inventory
+detail accordingly — no account-level switch, no configuration flag, no assumption.
 
-**Serialised items are rejected, not guessed at.** They may still exist in the account. If one
-reaches a WMS-managed location, T-2.7 raises an explicit out-of-scope exception rather than
-attempting a posting that will fail confusingly (D-08).
+**Serialised items are in scope (D-29 — supersedes D-08).** A serialised item reaching a WMS-managed
+location is **received, picked and shipped** through the serial flows, with its per-unit lifecycle in
+`customrecord_wms_serial_state`. There is **no** "reject serialised item" path — that is now a defect.
 
 ## 4. The complete ledger interface
 
@@ -198,8 +198,8 @@ managed by process as much as by code.
 
 ## 7. Sequencing rule: inbound always posts before outbound *(D-11, AD-18)*
 
-*Replaces the serial throughput risk, which D-08 closed, and the dependency-graph design, which
-D-11 simplified.*
+*The serial throughput risk (F-21) is live again — D-29 restored serial to scope (D-08 superseded), so
+T-0.2 sizes on one scan per serialised unit. The dependency-graph design was simplified by D-11.*
 
 **The rule:** the WMS may go negative; NetSuite may not.
 

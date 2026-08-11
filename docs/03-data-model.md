@@ -31,8 +31,8 @@ or an operator action **carries a mandatory Location** and every operational que
 > type**, not a flag on a shared item record. Six types: `inventoryitem`, `lotnumberedinventoryitem`,
 > `serializedinventoryitem`, and the assembly equivalents `assemblyitem`, `lotnumberedassemblyitem`,
 > `serializedassemblyitem`. The cache reads **`recordtype`** and maps it to **PLAIN / LOT / SERIAL** (a
-> serialised type is in-scope only to be *rejected*, D-08). No task may read a "tracking-mode field" —
-> there isn't one.
+> all three are in scope (D-29 — serial restored; D-08 superseded). No task may read a "tracking-mode
+> field" — there isn't one.
 >
 > **`N/cache` constraints (PF-15).** TTL **≥ 300 s**; **no persistence guarantee** (early eviction under
 > memory pressure); value **≤ 500 KB**; key **≤ 4 KB**. The cache **needs a loader function and must
@@ -47,12 +47,13 @@ or an operator action **carries a mandatory Location** and every operational que
 |---|---|---|
 | **`externalid`** *(standard field)* | — | **= client UUID v4. Platform-enforced UNIQUE (D-12) — the primary idempotency guard (AD-04 layer 1).** Ingestion sets it and attempts the create; a duplicate fails at the platform |
 | `custrecord_se_event_id` | Free-Form Text | Mirrors the UUID in `externalid` for convenient search/grouping (custom fields are easy to filter on). **Not itself unique** — the uniqueness lives on `externalid`. The committer groups by UUID as a dedupe safety net (AD-04 layer 2) |
-| `custrecord_se_type` | List/Record | PICK, PACK, REPLEN_MOVE, BIN_TRANSFER, COUNT, **SHORT_PICK, OVERRIDE, PUTAWAY, EXCEPTION, RECEIPT_PO, RECEIPT_TO, RECEIPT_WO** *(inbound added per D-09)*, **`LINE_FREEZE`** *(new, AD-21/PF-26 — emitted at wave release; the committer sets `noautoassignlocation` on the SO lines. Handler registered per T-2.6b; dormant if `AUTOLOCATIONASSIGNMENT` is off)* |
+| `custrecord_se_type` | List/Record | PICK, PACK, REPLEN_MOVE, BIN_TRANSFER, COUNT, **SHORT_PICK, OVERRIDE, PUTAWAY, EXCEPTION, RECEIPT_PO, RECEIPT_TO, RECEIPT_WO** *(inbound added per D-09)*, **`LINE_FREEZE`** *(AD-21/PF-26)*, **`RECEIPT_RMA`** *(new, D-32 — customer return receipt; a serial entry point, Part D)*, **`WRITE_OFF`** *(new, D-33 — scrap/write-off; posts an Inventory Adjustment; mandatory reason code + supervisor authorisation; retires named serials. Handler registered per task, not by editing the carved-out registry)* |
 | `custrecord_se_operator` | List/Record → Employee | |
 | `custrecord_se_wave` | List/Record → Wave Pick | |
 | `custrecord_se_order` | List/Record → Transaction | |
 | `custrecord_se_sku` | List/Record → Item | |
 | `custrecord_se_batch` | Free-Form Text | Lot/batch number |
+| `custrecord_se_serials` | Long Text (JSON array) | **New (D-29).** Serial numbers for a serialised line on PICK / PUTAWAY / BIN_TRANSFER / RECEIPT_* / WRITE_OFF. **Validation: array length = quantity; every serial resolves; no serial already sits elsewhere (invariant #21).** Empty for PLAIN/LOT lines |
 | `custrecord_se_source_bin` | List/Record → `customrecord_wms_bin` | |
 | `custrecord_se_target_bin` | List/Record → `customrecord_wms_bin` | |
 | `custrecord_se_qty` | Decimal | |
@@ -315,6 +316,56 @@ modelling choice, and its consequence that orders sharing only high-fan-out SKUs
 
 **Eligibility is upstream.** Only NetSuite-committed lines enter this projection (F-22, AD-17); the
 clustering module trusts the array it is given and does not re-check commitment.
+
+---
+
+## 3.13 `customrecord_wms_serial_state` — **new (D-29 — serial in scope)**
+
+`customrecord_wms_bin_state` stays the **scalar quantity** projection. A **serial is a unique physical
+object with its own lifecycle**, so it gets its own per-unit record. For a serialised item the two are
+tied by **invariant #22** (bin-state quantity = count of serial rows in that bin).
+
+| Field | Type | Notes |
+|---|---|---|
+| `custrecord_ss_item` | List/Record → Item | The serialised item (a `serializedinventoryitem` / `serializedassemblyitem`, PF-14) |
+| `custrecord_ss_serial` | Free-Form Text | The serial number string |
+| `custrecord_ss_bin` | List/Record → `customrecord_wms_bin` | Current bin. **A serial is in exactly one bin (invariant #21)** |
+| `custrecord_ss_location` | List/Record → Location | Denormalised from the bin (as bin-state, D-14) |
+| `custrecord_ss_status` | List/Record | **IN_STOCK, PICKED, SHIPPED, QUARANTINE, RETIRED** |
+| `custrecord_ss_generation` | Integer | **Monotonic generation counter (mandatory).** Re-entry of a retired serial increments this; **never a second row** |
+| `custrecord_ss_last_event` | List/Record → Scan Event | Last event applied |
+| `custrecord_ss_version` | Integer | Optimistic-concurrency marker (AD-03 uses platform conflict detection) |
+| **`externalid`** *(standard)* | — | **= item + serial number.** Platform-UNIQUE (D-12). **One permanent row per (item, serial) for all time** |
+
+**Generation counter — not optional (PF-23).** The `inventorynumber` record is never deleted and a
+retired serial string becomes re-usable, so a naive `externalid = item+serial` **collides on re-entry**
+(`UNIQUE_RCRD_ID_REQD`, PF-13). Rules: **one permanent row per (item, serial)**; re-entry of a **RETIRED**
+serial **reactivates the existing row and increments `generation`** — never a second row, **no hard
+delete ever**; **movement history keys on (row, generation)** so prior lifecycles stay legible and
+separate. *Acceptance:* retire then re-receive the same serial -> one row, generation incremented, earlier
+history intact and attributed to the earlier generation.
+
+## 3.14 Site — **new (D-30)**
+
+A **site** is a physical building; a **NetSuite location belongs to exactly one site** (a site may hold
+several); a **bin belongs to one location and therefore one site.** All three bindings are **immutable**.
+
+**Representation choice:** a **field on the Location** (`custrecord_loc_site` → a small
+`customrecord_wms_site` list record), **not** a field on every bin. Rationale: the location→site binding
+is the single source; the bin already carries its location (immutable, D-14), so the bin's site is derived
+through the location and never stored twice — avoiding a second denormalised binding that could drift.
+The site record is a thin list (code, name). *Worked example (D-30):* Location A (good, ~1,000 bins) and
+Location B (RQD, ~3 bins) are **different NetSuite locations under one site.** The operator picker selects
+the **site**; cache warm covers **all locations at that site** (Part E), so Location B is reachable.
+
+## 3.15 Location class — **new (D-30/D-33; confirmed required, no longer conditional)**
+
+Every Location carries a **class: `custrecord_loc_class` = OPERATIONAL | HOLDING.** A **HOLDING** location
+(RQD) is **excluded from:** the operator picker's *default*, wave generation, replenishment sourcing, and
+putaway targeting; and **its stock never counts toward an OPERATIONAL location's availability.** It is
+**NOT barred from fulfilment** — stock can ship from a holding location (a defect giveaway), which
+NetSuite's location-locked transactions handle natively. **PF-32 confirms in-transit inventory creates no
+location record, so RQD is the only driver** — the class is required now, not conditional on Q-36.
 
 ---
 

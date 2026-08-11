@@ -26,11 +26,11 @@ managed bundle or SuiteApp owns `customrecord_wms_*`, `custrecord_*` or `wms_*` 
 clash with what this project deploys. A clean namespace is a precondition for a repeatable SDF deploy
 with no manual account reconciliation.
 
-*Item census.* For every in-scope item, classify as **PLAIN** or **LOT** and report by item count
-and by share of order lines. Serial is out of scope (D-08), so the census has a second purpose:
-**confirm no serialised items exist in WMS-managed locations**, and list any that do so they can be
-excluded or re-configured before Phase 1. A serialised item reaching the commit path fails
-confusingly (F-21 residual, T-2.7).
+*Item census.* For every in-scope item, classify as **PLAIN, LOT or SERIAL** (the record type, PF-14)
+and report by item count **and by share of order lines**. **Serial is IN scope (D-29 — supersedes
+D-08).** The serial share is a **live sizing input (F-21 re-opened):** serialised lines are one scan per
+*unit*, not per line, so T-0.2 sizes the concurrency budget and staffing on the measured serial volume.
+Also count serialised units in WMS-managed locations so the serial_state seed (§3.13) is sized.
 
 **Costing is not audited and not designed around (D-11).** NetSuite runs costing; the WMS supplies
 quantity, date and lot and has no opinion about valuation. Record the method for information only if
@@ -60,8 +60,9 @@ production.
 **Requirement**
 Measure current concurrency consumption over a representative week (Application Performance
 Management / concurrency monitor). Model peak scan demand **from the T-0.1 item census, not from the
-FRD's figures**, which are unverified. With serial out of scope the one-scan-per-line assumption
-broadly holds, but it should still be validated against the census rather than taken on trust.
+FRD's figures**, which are unverified. **Serial is IN scope (D-29), so the one-scan-per-line assumption
+does NOT hold for serialised lines — size on one scan per unit for the serialised share (F-21).** Take
+the serial share from the census, not on trust.
 Slots required = req/s × mean server seconds. **Include inbound receipt scanning (Phase 5B)**, which
 the FRD's model excludes entirely. **The scan endpoint is a Suitelet, not a RESTlet (D-19)**
 — per-invocation governance and concurrent-slot cost are the same, so the numbers are unchanged; only
@@ -632,6 +633,29 @@ task, run on its own pass**, not an edit here. Dormant if `AUTOLOCATIONASSIGNMEN
 
 ---
 
+### T-2.6c — Serial-array validation in the affected handlers *(carved-out registry change — its own pass)*
+**Depends on:** T-2.6, C-3.13 (serial_state) · **Implements:** D-29, invariant #21 · *(new 2026-08-11; do NOT edit the carved-out registry module here)*
+
+**Narrative**
+As a developer, I want serial handling declared per event type in the registry, so that entry and movement
+enforce opposite serial rules without a special case leaking into the dispatchers.
+
+**Requirement**
+`PICK`, `PUTAWAY`, `BIN_TRANSFER` and the receipt types (`RECEIPT_PO/TO/WO/RMA`) plus `WRITE_OFF` accept a
+**serial array** (`custrecord_se_serials`). The handler `validate` enforces: **array length == quantity;
+every serial resolves; no serial already sits elsewhere (invariant #21)**. **Entry vs movement is
+OPPOSITE (Part D):** an **entering** serial (receipts) must **not** already exist as an active row; a
+**referenced** serial (PICK/PUTAWAY/BIN_TRANSFER) **must** exist and be **in the bin the operator claims**.
+A **lot** follows the same movement rule but carries a quantity rather than being fixed at 1 (PF-31). The
+registry module is carved out (D-23) — **this is a task, run on its own pass; do not edit the module here.**
+
+**Acceptance**
+- [ ] GIVEN a serialised PICK naming a serial not in the claimed bin, THEN `validate` returns a rejection verdict; GIVEN a receipt naming a serial that already exists live, THEN entry validation rejects it — the two rules are opposite.
+- [ ] GIVEN a serial array whose length != quantity, THEN it is rejected.
+- [ ] GIVEN the changes, THEN the carved-out guards (`guard-carveout-imports`, `guard-src-encoding`) still pass and the handlers have unit tests.
+
+---
+
 ### T-2.7 — `wms_lib_ledger_adapter.js` — the NetSuite boundary
 **Depends on:** T-0.1, T-2.5, T-2.6 · **Resolves:** F-19 · **Implements:** AD-16 · *(rewritten per D-07; shapes CONFIRMED and UNBLOCKED per D-27 — PF-14..PF-21)*
 
@@ -677,10 +701,12 @@ mode (PF-17): **SERIAL** = one sublist line per serial, `quantity` exactly 1; **
   create no NetSuite transaction, because stock has not changed location.
 
 Tracking mode is resolved per line from the item cache as **`recordtype`, not an account-level flag and
-not a field (PF-14)** — `inventoryitem`/`lotnumberedinventoryitem`/`serializedinventoryitem` (+ assembly
-equivalents) → PLAIN/LOT/SERIAL. **Mixed-mode orders are the normal case** and one `record.transform`
-must handle PLAIN and LOT lines together. **A serialised `recordtype` is rejected with an explicit
-out-of-scope exception** (D-08), never posted on a guess.
+not a field (PF-14)** — the **six types** (`inventoryitem`/`lotnumberedinventoryitem`/`serializedinventoryitem`
++ assembly equivalents) → **PLAIN/LOT/SERIAL, all in scope (D-29)**. **Mixed-mode orders are the normal
+case** and one `record.transform` (per order, per location — invariant #4, PF-18) must handle PLAIN, LOT
+and SERIAL lines together. Per PF-17: **SERIAL** = one `inventoryassignment` line per serial, quantity
+exactly 1; **LOT** = one line, quantity may exceed 1 / be fractional; **PLAIN** = no detail. **There is no
+"reject serialised item" path — that rule is withdrawn (D-29 supersedes D-08).**
 
 **Transaction date comes from scan time, not commit time** (F-23, AD-17). This is a **pre-check**
 (PF-24): read `closed` on the `accountingperiod` record and decide before posting; where the scan-date
@@ -692,7 +718,7 @@ grep.
 
 **Acceptance**
 - [ ] GIVEN an order with both a PLAIN and a LOT line, WHEN it commits, THEN one Item Fulfillment is created with correct inventory detail for each line and no error.
-- [ ] GIVEN a serialised item reaching the commit path, THEN it is rejected with an explicit out-of-scope exception, not a raw platform error.
+- [ ] GIVEN a serialised line at commit, THEN it posts with one `inventoryassignment` line per serial (quantity 1, PF-17) and the named serials update in `customrecord_wms_serial_state` — it is **committed, not rejected** (D-29).
 - [ ] GIVEN a PO receipt event, WHEN it commits, THEN an Item Receipt posts against the correct PO with lot and expiry recorded.
 - [ ] GIVEN an event whose scan-date period has closed, THEN it posts to the current period and raises a `CLOSED_PERIOD_POSTING` exception.
 - [ ] GIVEN a bin transfer or replenishment event, WHEN it commits, THEN **no** NetSuite transaction is created, the WMS projection updates, and the event is marked POSTED rather than FAILED.

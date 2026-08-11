@@ -70,12 +70,20 @@ the ordered quantity. The WMS allocates *within* NetSuite's commitment — it do
 order gets stock. Skipping this hands one customer's promised stock to another: totals stay correct,
 attribution does not.
 
-`map` emits **`(location, SKU)` → order** so partitioning by location is intrinsic (D-14). `reduce`
+`map` emits **`(location, SKU)` → order LINE** so partitioning by location is intrinsic (D-14). `reduce`
 builds candidate pairs **within a location**. `summarize` runs `cluster()` and creates
 `customrecord_wms_wave_pick` records with **`custrecord_wave_location` set**, orders, zone, ship-by,
 similarity score, line and unit counts, status Pending. Orders already on an open wave are excluded.
-An order's fulfilling stock location determines its wave location; an order that cannot be served from
-a single location is out of scope for this release (flag, do not silently split).
+
+**Allocation and waving key on the LINE's location, not the order header (D-30/PF-18/PF-34).** The
+Q-32 "refuse a multi-location order and raise an exception" recommendation is **withdrawn** — a sales
+order whose lines carry different locations is a **supported NetSuite configuration (PF-18), not an
+error.** **One sales order may generate work in two locations; each location's lines wave independently;
+the order completes when both are picked.** Read the line's location with **`line.inventorylocation ||
+line.location`** (one helper, two platform shapes, PF-34). **D-14's "a wave never spans locations" still
+stands**, but for the right reason: **a wave is a physical pick run by one operator at one site, so it
+cannot span locations — that is a property of waves, not a constraint on orders.** Getting that backwards
+is what produced the withdrawn refusal recommendation.
 
 **Build the projection to the defined contract (data model section 3.12), not an ad-hoc shape.**
 `getInputData`/`reduce` assemble each order into the order-projection contract that `cluster()` consumes;
@@ -91,6 +99,8 @@ mis-set cap that excludes real signal is visible rather than silent.
 **Acceptance**
 - [ ] GIVEN pending sales orders sharing ≥ the configured threshold of SKUs **in the same location**, WHEN the pipeline runs, THEN they are grouped into a single Wave Pick record with its `custrecord_wave_location` set. *(FRD TC-WAV-01, D-14)*
 - [ ] GIVEN two orders that share every SKU but draw from **different locations**, WHEN the pipeline runs, THEN they are placed in **separate** waves.
+- [ ] GIVEN **one sales order whose lines span two locations**, WHEN the pipeline runs, THEN it generates work in **both** locations (each location's lines wave independently) and is **not** refused — the order completes when both are picked. *(D-30, PF-18; Q-32 refusal withdrawn)*
+- [ ] GIVEN a line whose location is on `inventorylocation` in one case and `location` in another, THEN the same helper reads both (PF-34).
 - [ ] GIVEN an order already assigned to an open wave, WHEN clustering runs, THEN it is not assigned to a second wave.
 - [ ] GIVEN an open **Transfer Order** with committed lines at its source location, WHEN the pipeline runs, THEN its lines are eligible and cluster through the **same engine** as sales-order lines (parameterised by transaction type), producing a wave in the source location. *(D-22)*
 - [ ] GIVEN a sales order line with zero committed quantity, WHEN clustering runs, THEN it is excluded from every wave.

@@ -204,7 +204,7 @@ The 1-SKU/1-batch rule becomes a purely WMS rule with no platform constraint fig
 cleaner home for it than it had.
 
 **What replaces it.** Variability moves from *account level* to *item level*: PLAIN, LOT or SERIAL
-*(narrowed to PLAIN and LOT by D-08)*,
+*(narrowed to PLAIN and LOT by D-08 — **restored to all three by D-29, D-08 superseded**)*,
 read from the item record and cached as static data. Mixed-mode orders are normal and one
 `record.transform` must handle all three. The ledger interface reduces to three transaction shapes
 — Item Fulfillment, Inventory Adjustment, Inventory Transfer — and **bin movements post nothing**,
@@ -237,7 +237,14 @@ simpler but the control materially weaker.
 
 ---
 
-## D-08 — Serial numbers out of scope; batch numbers in scope · *accepted*
+## D-08 — Serial numbers out of scope; batch numbers in scope · ~~*accepted 2026-08-08*~~ **SUPERSEDED BY D-29 (2026-08-11)**
+
+> **SUPERSEDED 2026-08-11 by D-29.** Serialised items **are in scope** — they are stocked, picked,
+> shipped and received in WMS-managed warehouses, and the sponsor's settled position is that **lot and
+> serial were required from ideation.** The reasoning and date below stay on the record (the scan-volume
+> analysis was accurate for its assumptions), but the ruling no longer holds. Everything it closed —
+> F-21, Q-21/Q-22/Q-23, "reject serialised items", scalar-only bin state — is re-opened or restated by
+> D-29 and the Part-H sweep. **Do not act on the text below.**
 
 **Ruling (2026-08-08):** *"Batch numbers are in scope, Serial Numbers are out of scope."*
 
@@ -806,17 +813,104 @@ Transfer** (PF-20).
 
 **Affects:** T-2.7 (Inventory Transfer shape), the inbound/QC isolation path (Phase 5B), `06-netsuite-boundary.md`.
 
+## D-29 — Serialised items are IN scope · *accepted 2026-08-11; SUPERSEDES D-08*
+
+Serialised items are **stocked, picked, shipped and received in WMS-managed warehouses.** The sponsor's
+settled position is that **lot and serial were required from ideation**; D-08's exclusion was a wrong
+turn, now reversed. **D-08 is marked SUPERSEDED** (its reasoning and date retained for the record).
+
+**Platform detail (PF-14):** a NetSuite item may be **inventory or assembly**, and either may be **plain,
+lot-tracked or serialised — six record types**: `inventoryitem`, `lotnumberedinventoryitem`,
+`serializedinventoryitem`, `assemblyitem`, `lotnumberedassemblyitem`, `serializedassemblyitem`. The item
+cache resolves **record type**, not a tracking-mode field.
+
+Tracking modes are now **PLAIN, LOT and SERIAL** (invariant #14). Bin state stays the scalar quantity
+projection, but a serialised item additionally has its own lifecycle record (`customrecord_wms_serial_state`,
+Part C) and two new invariants (#21, #22). **Affects:** invariants #14/#19/#21/#22, schema (serial_state),
+all flows (Part D), the handheld serial cache (Part E), the ledger adapter (Part F), and the entire Part-H
+D-08 cascade sweep.
+
+## D-30 — Site and NetSuite location are distinct concepts · *accepted 2026-08-11*
+
+A **site** is a physical building. A **NetSuite location belongs to exactly one site; a site may contain
+several.** A **bin belongs to exactly one location and therefore one site.** All three bindings are
+**immutable.**
+
+**Worked example (recorded verbatim):** *Location A is the good warehouse with ~1,000 bins; Location B is
+the RQD warehouse with ~3 bins; both are under one roof, one site, but the system keeps them separate.*
+
+**Consequences (stated so they are not re-litigated):**
+- **The operator picker selects a SITE**, not a location. **Cache warm covers every location at that
+  site**, so the RQD bins (Location B) are reachable by the operator who physically walks to them.
+- **The `<LOCATIONCODE>-<BINCODE>` naming prefix stays the LOCATION code** — that is what guarantees bin
+  uniqueness and what NetSuite postings reference. The prefix is not re-based on the site.
+
+**Affects:** schema (site record/field, Part C), the handheld picker + cache warm (Part E), D-14 bin
+naming, the location class (below).
+
+## D-31 — Movement rules by scope · *accepted 2026-08-11; EXTENDS D-28*
+
+- **Between sites** — a NetSuite **Transfer Order**, picked and shipped by the WMS (D-22).
+  **`ERR_WMS_CROSS_LOCATION_MOVE` re-scopes to cross-SITE moves only.**
+- **Between NetSuite locations within one site** (A <-> B, **both directions**) — an **Inventory Transfer**
+  posted by the committer. **B -> A is as routine as A -> B**: stock deemed fit for sale transfers back
+  into an operational bin.
+
+**This REVERSES the previously recorded rule that a WMS bin transfer may never cross locations** (D-14).
+That rule was too strong: within a site, crossing NetSuite locations is a committer-posted Inventory
+Transfer, not a forbidden move. **Sweep for the old wording** (Part H / Part G).
+
+**Affects:** invariant #13 (bin movements now post in two cases), D-14 cross-location wording, T-4.3
+(cross-location check re-scoped to cross-site), the RQD isolation flow (Part D).
+
+## D-32 — Customer returns (RMA) are IN scope · *accepted 2026-08-11; resolves Q-45*
+
+**RMA receipt joins PO, TO and Work-Order receipts in the Phase 5B inbound path**, and is **one of the
+three points where serials enter the system** (Part D). Delivery plan and phase scope updated.
+
+**Affects:** Q-45 (resolved), Phase 5B scope, the delivery plan, serial entry validation (Part D).
+
+## D-33 — Inventory write-off path, with mandatory authorisation · *accepted 2026-08-11*
+
+Stock reviewed and condemned is **written off via an Inventory Adjustment (PF-21).** A write-off destroys
+value and hits the GL, so it is **not a bare operator scan**: it requires **supervisor authorisation and a
+mandatory reason code.** For serialised items it **retires named serials** (status -> RETIRED in
+`customrecord_wms_serial_state`, never deletion, consistent with PF-23).
+
+**Open questions raised (recorded, not resolved):** which **GL account** offsets the write-off (Q-53), and
+is there a **value threshold** above which finance — not a warehouse supervisor — must approve (Q-53).
+NetSuite's **Default Inventory Count Account** preference may answer the first half.
+
+**Affects:** a new write-off event type + handler (Part D task), the committer (same phase as Inventory
+Transfers), invariant #13 (write-off posts an Inventory Adjustment), Q-53.
+
+## Location class — confirmed REQUIRED, no longer conditional · *2026-08-11 (under D-30/D-33)*
+
+Every location is **operational or holding.** A **holding** location (RQD) is **excluded from default wave
+generation, replenishment sourcing and putaway targeting**, and **its stock never counts toward an
+operational location's availability.** But it is **NOT barred from fulfilment** — stock can legitimately
+ship from Location B (a defect giveaway is the sponsor's own example), and NetSuite's location-locked
+transactions handle that natively. **Any earlier "holding locations never fulfil" formulation is wrong —
+correct it.** **PF-32 confirms in-transit inventory creates no location record, so RQD is the only driver**
+of the class (this removes the earlier Q-36 dependency for *requiring* the class — the class is required
+now; Q-36 only affects whether an in-transit location additionally needs classifying, which PF-32 says it
+does not).
+
+**Affects:** the location-class schema (Part C), the Q-29/Q-36 knot in D-14 (the class is no longer
+*conditional* on both landing), wave/replen/putaway scoping, availability.
+
 ---
 
 ## Superseded
 
 | Item | Status |
 |---|---|
+| **D-08 (serial out of scope)** | **SUPERSEDED by D-29 (2026-08-11)** — serial is in scope; see the Part-H cascade sweep |
 | F-01 (original: cache concurrency race) | **Rewritten** — see D-01 and revised F-01 |
-| F-21 (serial scan volume) | **Closed by D-08** — serial out of scope |
-| Q-05 (receiving/counting/returns deferred) | **Receiving closed by D-09**; counting and returns still deferred |
+| F-21 (serial scan volume) | ~~Closed by D-08~~ **RE-OPENED by D-29** — restated: serial volume is a real sizing input again (T-0.1 census, T-0.2) |
+| Q-05 (receiving/counting/returns deferred) | **Receiving closed by D-09**; counting deferred (Q-46); **returns closed by D-32** |
 | Q-15 (lot expiry coverage) | **Answered structurally by D-09** — expiry captured at receipt |
-| Q-21, Q-22, Q-23 (serial questions) | **Closed by D-08** |
+| Q-21, Q-22, Q-23 (serial questions) | ~~Closed by D-08~~ **RE-OPENED / restated by D-29** — serial mix, bin rule and capture-point are now live design (invariant #21, serial_state, Part D) |
 | F-20 (back-office attribution) | **Materially reduced by D-09** — severity S2 retained as backstop |
 | F-23 costing-sequence half | **Withdrawn by D-11** — NetSuite runs costing; period half retained |
 | AD-18 per-item dependency graph | **Replaced by D-11** with a global two-phase priority |

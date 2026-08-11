@@ -4,6 +4,25 @@ Planning bundle derived from `FRD Advance Warehouse Management.pdf`. **Planning 
 implementation has begun.** Structured for Claude Code: drop this into the repo root and the
 conventions in `CLAUDE.md` apply automatically.
 
+> **Revision 9 — 2026-08-11 (serial reissue + platform facts).** The decisions log now runs to **D-33**
+> and is authoritative; this plan is a snapshot. **Material scope ADDED since Revision 8 — stated plainly,
+> not absorbed silently:**
+> - **Serialised items are IN scope (D-29 — supersedes D-08).** New `customrecord_wms_serial_state` with a
+>   generation counter; new invariants #21/#22; serial validation (entry vs movement) across the flows;
+>   a wave-scoped serial cache on the handheld. **This re-opens the F-21 scan-volume risk** — serialised
+>   lines are one scan per *unit*, so T-0.2 sizing grows.
+> - **Customer returns (RMA) receipt in scope (D-32 — resolves Q-45):** new Phase-5B task T-5.11.
+> - **Inventory write-off path with mandatory authorisation (D-33):** new event type + handler (T-5.12).
+> - **Site vs NetSuite location distinction (D-30)**, **movement rules by scope (D-31)**, and the
+>   **location class now confirmed required (not conditional).** RQD isolation is an Inventory Transfer
+>   (D-28), and A<->B within a site is routine both ways (D-31).
+> - **Q-32 refusal withdrawn (Part G):** a multi-location sales order is supported, not an error — waving
+>   keys on the line's location.
+> - Platform facts recorded in `docs/08` (D-27); ledger shapes CONFIRMED.
+> These are **additions to Phase 5B and Phases 6–7 scope and to the estimate** — serial handling touches
+> every flow. Read [`docs/05-decisions-log.md`](05-decisions-log.md) and
+> [`docs/08-platform-facts.md`](08-platform-facts.md) first.
+>
 > **Revision 8 — 2026-08-09.** The decisions log now runs to **D-22** and is authoritative; this plan
 > is a snapshot. Since Revision 6: multi-location (D-14) and its follow-ups (D-20 location-switch
 > exception); PWA + Option C auth confirmed (D-13/D-19) with device auth (D-21), privilege separation
@@ -16,7 +35,7 @@ conventions in `CLAUDE.md` apply automatically.
 > **Revision 6 — 2026-08-08.** **Costing is NetSuite's concern and out of WMS scope. The WMS may go
 > negative; NetSuite may not. Inbound always posts before outbound** (D-11). This simplifies the
 > sequencing design to a two-phase priority and adds a `DEFERRED` event status. Revision 5 applied
-> D-08 (serial out), D-09 (inbound via WMS, Phase 5B) and D-10 (authority boundary). Start with
+> D-08 (serial out — **since superseded by D-29; serial is in scope**), D-09 (inbound via WMS, Phase 5B) and D-10 (authority boundary). Start with
 > [`docs/06-netsuite-boundary.md`](06-netsuite-boundary.md) and
 > [`docs/05-decisions-log.md`](05-decisions-log.md).
 
@@ -31,7 +50,7 @@ conventions in `CLAUDE.md` apply automatically.
 | [`docs/02-architecture.md`](02-architecture.md) | 18 architecture decisions that override or extend the FRD |
 | [`docs/03-data-model.md`](03-data-model.md) | Consolidated schema (both addenda merged, plus review-driven additions) |
 | [`docs/04-open-questions.md`](04-open-questions.md) | 14 open decisions; **1 hard blocker** — the handheld platform |
-| [`CLAUDE.md`](../CLAUDE.md) | Coding conventions and 20 non-negotiable invariants |
+| [`CLAUDE.md`](../CLAUDE.md) | Coding conventions and 22 non-negotiable invariants |
 
 ## Task backlog
 
@@ -58,7 +77,7 @@ conventions in `CLAUDE.md` apply automatically.
 
 | Ruling | Effect |
 |---|---|
-| **D-08** — serial out, batch in | Tracking modes reduce to PLAIN and LOT. **Closes F-21** — the scan-volume risk is gone and bin state stays scalar. Residual: a serialised item reaching a WMS location must be *rejected explicitly*, not guessed at |
+| ~~**D-08** — serial out, batch in~~ **SUPERSEDED by D-29** | *(historical)* D-08 reduced tracking modes to PLAIN and LOT and closed F-21. **Reversed 2026-08-11 by D-29: serial is IN scope** — F-21 re-opened, `customrecord_wms_serial_state` added, invariants #21/#22 added; there is no "reject serialised item" rule. |
 | **D-09** — inbound flows through the WMS | **Scope increase: new Phase 5B, six tasks.** PO / TO / Work Order receipt plus directed putaway. Closes Q-05's receiving portion and Q-15 (lot expiry is now captured at receipt). Largely neutralises F-20. New finding **F-24** — receipt and consumption can post out of order |
 | **D-10** — WMS primary, NetSuite keeps commitment and cost | **Two S1 findings.** **F-22**: the wave engine had no reference to NetSuite commitment, so it could allocate stock promised to another order — totals right, attribution wrong. **F-23**: async batched posting fights inventory accounting on period, sequence and negative inventory |
 
@@ -82,8 +101,8 @@ fighting it.
 
 **What it surfaced — three risks, two of them previously masked:**
 
-- **F-21 · serial items may double the scan volume the design is sized on.** *(Closed in revision 5
-  by D-08 — serial is out of scope.)*
+- **F-21 · serial items may double the scan volume the design is sized on.** *(Re-opened 2026-08-11 by
+  D-29 — serial is back in scope; T-0.2 sizes on one scan per serialised unit.)*
 - **F-20 · back-office movements cannot be attributed to a bin.** *(Materially reduced in revision 5
   by D-09 — inbound now flows through the WMS.)* A direct Inventory Adjustment
   changes location quantity with no bin information. Reconciliation detects the mismatch but cannot

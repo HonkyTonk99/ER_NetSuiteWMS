@@ -28,6 +28,9 @@ silent scope reduction as a defect, not an optimisation.
 *Revised 2026-08-08 per sponsor rulings D-01…D-11 in `docs/05-decisions-log.md`. Invariants 1, 2, 7,
 13, 14 and 17–20 changed materially or are new — do not work from a cached memory of an earlier
 version.*
+*Further revised 2026-08-11 per the serial reissue (D-29…D-33): **#4** now per (order, location); **#13**
+gains two posting exceptions; **#14** admits SERIAL; **#19** adds the serial-never-negative rule; **#21**
+and **#22** are new (serial in one bin; bin qty = serial-row count). Serial is IN scope (D-08 superseded).*
 
 1. **`customrecord_wms_bin_state` is the operational truth of a bin, not `inventorybalance`.** The
    ledger lags by the event queue **by a measured window** (established in T-12.1, not an assumed
@@ -47,7 +50,9 @@ version.*
    net. Custom text fields have no uniqueness — only `externalid` does. Bin state is a record lookup by
    internal ID. (F-08, AD-04, D-12)
 4. **Never call `record.transform` synchronously from a Suitelet or RESTlet.** All ledger writes go
-   through the Map/Reduce committer. One `record.transform` per sales order, ever. (F-15, AD-01)
+   through the Map/Reduce committer. **One `record.transform` per (sales order, location)**, ever — a
+   single Item Fulfilment cannot span locations (PF-18); the rule degenerates to one-per-order when the
+   order sits in a single location. (F-15, AD-01, D-27)
 5. **Never build a group key by string concatenation.** Handlers return key **objects**, serialised
    centrally. Enum values contain underscores. (F-12, AD-06, AD-15)
 6. **Never match fulfillment lines by item ID.** Use the SO line unique key, and aggregate all events
@@ -71,13 +76,17 @@ version.*
     handler. (AD-15)
 13. **`binnumber` must not appear anywhere in the codebase.** NetSuite has no bins — bins live only
     in the WMS. No Bin Management feature, no Bin Transfer record type, no bin field on any
-    inventory detail line. Bin movements post **nothing** to NetSuite. (F-19, AD-16, D-07)
+    inventory detail line. **Bin movements post nothing to NetSuite when source and destination bins
+    share a NetSuite location — with TWO exceptions (D-31, D-33):** crossing NetSuite locations within a
+    site posts an **Inventory Transfer** (D-31); writing stock off posts an **Inventory Adjustment**
+    (D-33). `binnumber` and Bin Management stay prohibited regardless — the CI guard is unchanged.
+    (F-19, AD-16, D-07, D-31, D-33)
 14. **Item tracking mode is per item, resolved from the item cache — never an account-level flag.**
-    **Tracking mode IS the record type, not a field (PF-14):** the cache resolves `recordtype`
-    (`inventoryitem`/`lotnumberedinventoryitem`/`serializedinventoryitem` + the assembly equivalents) to
-    PLAIN / LOT / SERIAL. **PLAIN or LOT only** in scope — serial is out (D-08); a serialised recordtype
-    must be *rejected with an explicit exception*, never posted on a guess. Mixed-mode orders are normal.
-    All of it goes through `wms_lib_ledger_adapter.js`. (AD-16, D-27)
+    **Tracking mode IS the record type, not a field (PF-14):** the cache resolves `recordtype` across the
+    **six types** (`inventoryitem`/`lotnumberedinventoryitem`/`serializedinventoryitem` + the assembly
+    equivalents) to **PLAIN / LOT / SERIAL**. **All three are in scope (D-29 — serial is IN scope, D-08
+    superseded).** There is **no** "reject serialised items" rule — that behaviour is now a defect.
+    Mixed-mode orders are normal. All of it goes through `wms_lib_ledger_adapter.js`. (AD-16, D-27, D-29)
 15. **Never allocate stock NetSuite has not committed to that order.** Wave eligibility filters on
     committed quantity; picked quantity per line may not exceed it. The WMS refines NetSuite's
     commitment, it does not replace it. Getting this wrong ships one customer's stock to another
@@ -96,21 +105,30 @@ version.*
     Global priority, not a per-item dependency graph. **One exception (F-30, D-22): a Transfer Order
     receipt whose source TO fulfilment is not yet `POSTED` is set `DEFERRED` and retried — never
     `FAILED` — because the destination receipt cannot precede its own source leg.** (F-24, F-30, AD-18)
-19. **The WMS may go negative; the WMS must not let NetSuite go negative.** Core NetSuite *permits*
-    negative inventory (PF-22) — prevention lives in the Enhanced Validations SuiteApp, which this
-    account may not have installed, so **the platform will not enforce this for us.** The committer
-    therefore **pre-checks availability and sets `DEFERRED` on its own judgement (proactive, not a caught
-    rejection)**. Asymmetry by tracking mode (PF-22): serial/lot items genuinely refuse (`NOT_IN_INVT`,
-    `NUM_ITEMS_GRTR_THAN_QTY`) — kept as a catch-and-defer backstop; **plain items post negative if not
-    pre-checked** — so the WMS pre-check is the *only* control for them. An outbound NetSuite cannot
-    satisfy is set `DEFERRED` and retried — **never `FAILED` on first attempt.** Deferred is legitimate
-    work in the wrong sequence; failed needs a human. Keep them distinct or the exception queue becomes
-    noise. (F-25, AD-18)
+19. **The WMS may go negative for PLAIN and LOT; the WMS must not let NetSuite go negative; and the WMS
+    must NEVER go negative for a serialised item.** Core NetSuite *permits* negative inventory (PF-22) —
+    prevention lives in the Enhanced Validations SuiteApp, which this account may not have installed, so
+    **the platform will not enforce this for us.** The committer therefore **pre-checks availability and
+    sets `DEFERRED` on its own judgement (proactive, not a caught rejection)**. Asymmetry by tracking mode
+    (PF-22): serial/lot items genuinely refuse (`NOT_IN_INVT`, `NUM_ITEMS_GRTR_THAN_QTY`) — kept as a
+    catch-and-defer backstop; **plain items post negative if not pre-checked** — so the WMS pre-check is
+    the *only* control for them. **A serialised item can never go negative in the WMS either — you cannot
+    ship a serial you do not hold (invariant #21).** An outbound NetSuite cannot satisfy is set `DEFERRED`
+    and retried — **never `FAILED` on first attempt.** Deferred is legitimate work in the wrong sequence;
+    failed needs a human. Keep them distinct or the exception queue becomes noise. (F-25, AD-18, D-29)
 20. **A bin is EMPTY when `custrecord_bs_item` is cleared — not when quantity equals zero.** Never test
     emptiness with a float comparison: `custrecord_bs_qty` is a Decimal, and UOM conversion or partial
     units can leave fractional residue (a bin at `0.0000001` would read as permanently occupied). A bin
     with negative quantity and an item still set is **OCCUPIED AND ANOMALOUS**, and accepts only the SKU
     and lot already recorded against it. (F-25)
+21. **A serial number is in exactly one bin at a time.** A serialised unit is a single physical object and
+    cannot be in two places. A putaway or transfer naming a serial already recorded elsewhere (an active
+    row in `customrecord_wms_serial_state`) is **rejected**. A **lot**, by contrast, may split freely
+    across bins and locations (PF-31) — it is a quantity attribute, not a physical unit. (D-29, PF-31)
+22. **For a serialised item, bin-state quantity equals the count of its serial rows in that bin.**
+    `custrecord_wms_serial_state` is the per-unit truth; `customrecord_wms_bin_state` is the scalar
+    quantity. Reconciliation (T-8.3) checks the two agree for serialised items and raises on divergence.
+    (D-29, PF-31)
 
 ## Conventions
 

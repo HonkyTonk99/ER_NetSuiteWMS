@@ -95,8 +95,9 @@ nice-to-have** (Phase 8).
   `06-netsuite-boundary.md`.
 - The ledger interface is **six** transaction shapes — three outbound, three inbound since D-09 put
   receiving through the WMS. Bin movements post nothing.
-- **Serial numbers are out of scope; batch numbers are in** (D-08). Item tracking mode is PLAIN or
-  LOT, per item.
+- **Serial, lot and plain items are all in scope** (D-29 — supersedes D-08). Item tracking mode is
+  **PLAIN, LOT or SERIAL**, per item (the record type, PF-14). Serialised units carry a per-unit
+  lifecycle record (`customrecord_wms_serial_state`).
 - **Inbound is in scope** (D-09): PO, Transfer Order and Work Order receipt plus directed putaway,
   all through the WMS. Phase 5B.
 - **The WMS is operationally primary, but NetSuite retains authority over commitment and cost**

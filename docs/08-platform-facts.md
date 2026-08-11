@@ -90,21 +90,34 @@ SuiteApps, Multi-Book, OneWorld) are tracked as **Sheet C** questions in `04-ope
 > **T-0.8 (T1) runs first and nothing in Phase 1 starts until it passes.** Cross-referenced from
 > `04-open-questions.md` (Sheet C) and `tasks/phase-0-2-foundation.md`.
 
+## Serial, lot, location — added by the serial reissue (D-29..D-33)
+
+| # | Fact | Status | Depends on it |
+|---|---|---|---|
+| **PF-31** | **A lot may split freely across bins and locations** — a lot is a quantity attribute, not a physical unit. A **serial** is a single physical object and is in **exactly one bin** at a time. | CONFIRMED | invariant #21/#22, serial_state, reconciliation (T-8.3) |
+| **PF-32** | **In-transit inventory creates NO location record** — it is a state on the transfer, not a NetSuite location. So an in-transit transfer is **not** a driver of the location class; **RQD (a holding location) is the only driver** (Q-36's location-class dependency is discharged). | CONFIRMED | location class (D-30/D-33), Q-36 |
+| **PF-33** | Under standard **Multi-Location Inventory**, a **single consolidated Item Receipt handles lines destined for different locations** (`inventorylocation` per line). Splitting into per-location receipts occurs **only** under **Centralised Purchasing** or **cross-subsidiary** (Q-52). | CONFIRMED (single-subsidiary, `CENTRALIZEPURCHASING` off — PF-28); cross-subsidiary is **Sheet C** (Q-52) | Phase 5B PO receipt, Part G |
+| **PF-34** | A transaction **line's location is read as `line.inventorylocation \|\| line.location`** — two platform shapes for the same concept; use one helper. | CONFIRMED | order/wave location keying (Part G), T-6.2, T-2.7 |
+
+*Note (2026-08-11): the serial reissue block cited PF numbers from the lost platform-facts pass, whose
+numbering differs from this file. The mapping actually used: "six record types" = **PF-14** (not PF-24);
+"lot splits" = **PF-31** (not PF-25); "in-transit no location" = **PF-32** (not PF-20); "consolidated
+receipt" = **PF-33** (not PF-21); "line location shapes" = **PF-34** (not PF-19). PF-16/17/18/22/23 already
+matched.*
+
 ---
 
-## Deferred design recorded (do not build now)
+## Live design (was "deferred" under D-08 — now in scope under D-29)
 
-**Serial state needs a generation counter (from PF-23).** Serial is **out of scope (D-08)**, so this is
-**not built now** — recorded here so the design is not lost if serial ever enters scope. Because the
-`inventorynumber` record is never deleted and a retired serial string becomes re-usable (PF-23),
-`externalid = item+serial` **collides on re-entry**. The design:
+**Serial state needs a generation counter (from PF-23) — this is now LIVE design, built as
+`customrecord_wms_serial_state` (data model section 3.13).** Because the `inventorynumber` record is never
+deleted and a retired serial string becomes re-usable (PF-23), a naive `externalid = item+serial`
+**collides on re-entry** and the create fails with `UNIQUE_RCRD_ID_REQD` (PF-13). The design:
 
-- **One permanent row per `(item, serial)`**, carrying a **status** and an integer **generation
-  counter**. No hard delete, ever.
+- **One permanent row per `(item, serial)`**, for all time, carrying a **status** and an integer
+  **generation counter**. No hard delete, ever.
 - **Re-entry of a retired serial reactivates the existing row and increments the generation** — it never
   inserts a second row.
 - **Movement history keys on `(row, generation)`** so prior lifecycles stay legible and separate.
-- **Acceptance (when built):** retire then re-receive the same serial → **one row, generation
-  incremented, prior history intact and attributed to the earlier generation.**
-
-Owner note: this becomes a real task only if D-08 is revisited; until then it is a recorded intention.
+- **Acceptance:** retire then re-receive the same serial -> **one row, generation incremented, prior
+  history intact and attributed to the earlier generation.**

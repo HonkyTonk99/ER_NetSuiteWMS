@@ -104,6 +104,14 @@ subsets for that location**. Resolved and pushed by the server, not fetched on d
 cannot be validated locally is a design failure, not a runtime condition. Cache carries a staleness
 limit and a sync token.
 
+*Serial cache is scoped to the WAVE, not the location (D-29).* Caching every serial in a warehouse is
+unbounded and would wreck the T-3.4 budget. Caching the serials for the **bins in the operator's assigned
+wave** is bounded (tens of bins) and preserves **offline** serial validation — so **invariant #11 holds
+with no new exception.** Serial cache warm happens **at wave assignment**, is **scoped to that wave's
+bins**, and is **discarded on wave completion.** Event payloads (`PICK`, `PUTAWAY`, `BIN_TRANSFER`, the
+receipt types) carry a **serial array**; the client validates offline that **count == quantity, every
+serial resolves, and no serial already sits elsewhere** (invariant #21) before enqueuing.
+
 *Staleness refresh vs in-progress work (D-13).* A staleness refresh (or a background re-warm) replaces
 **reference data only** — item, bin, policy, zone, pick-sequence subsets. It **must not discard
 in-progress operator work**: the durable outbound queue and the operator's current-task state (position
@@ -164,6 +172,7 @@ staleness limits, with a supervisor-visible reason.
 - [ ] GIVEN a batch where some events succeed and some return `retryable`, WHEN the response is processed, THEN **exactly** the acknowledged (`SUCCESS`/`idempotent`) events are pruned by UUID and the `retryable` ones stay queued — never the whole batch, never nothing. *(per-event ack, D-13)*
 - [ ] GIVEN an event that returns a terminal `validation`/`auth` failure, THEN it moves to a local dead-letter surfaced to the operator, and is never silently dropped.
 - [ ] GIVEN a staleness refresh or background re-warm while the operator is mid-task, THEN reference data updates but the durable queue and the operator's in-progress task state are preserved (only a location switch purges). *(D-13)*
+- [ ] GIVEN a wave assignment, THEN the serial cache warms only for that wave's bins (bounded), a serialised scan validates offline (count==qty, resolves, not elsewhere), and the serial cache is discarded on wave completion. *(D-29; invariant #11 holds)*
 - [ ] GIVEN the app is force-killed with a non-empty queue, WHEN it restarts, THEN the queue is intact and drains (IndexedDB-backed, D-13).
 - [ ] GIVEN `navigator.storage.persist()` is **denied**, THEN the app still functions, warns that storage is best-effort, and the unsynced-count / hard-block controls remain the safety net — the accepted D-13 residual is handled, not ignored.
 - [ ] GIVEN the network is fully offline, WHEN the app is reloaded, THEN the **service-worker-cached shell** brings it back up, and it operates against the **IndexedDB** cache — while the master-data warm (which needs connectivity) is not served from the service worker. *(D-13; shell ≠ data)*
@@ -264,11 +273,13 @@ that I can work at scan-every-2-seconds pace without waiting on the system.
 **Requirement**
 Screens: login/shift start **(includes location select, D-14)**, task list, directed pick (bin → SKU →
 lot → qty), replenishment move, bin transfer, putaway, short pick, stage/handoff.
-**Location select at login (D-14):** the operator picks one of their allowed locations
-(`custrecord_op_allowed_locations`); it becomes the mandatory session context stamped onto every scan
-(T-3.1) and scopes the cache warm (T-3.2). **One location per session** (Q-31); switching is an explicit
-action that triggers a full purge + re-warm and needs connectivity. A visible indicator shows the
-current location at all times.
+**Site select at login (D-30):** the operator picks a **site** (a physical building), not a bare
+NetSuite location. **Cache warm covers every NetSuite location at that site (D-30)** — so the holding/RQD
+location's bins are reachable by the operator who walks to them, without a second login. The scan's
+location is still resolved per bin (a bin belongs to exactly one location, D-14/D-30) and stamped onto
+every scan (T-3.1). **One site per session** (Q-31, restated for sites); switching sites is an explicit
+action that triggers a full purge + re-warm and needs connectivity. A visible indicator shows the current
+site (and the active location) at all times.
  Local validation against a cached task list so
 success renders in < 150 ms. Explicit sad paths: wrong bin scanned, wrong SKU, wrong lot, insufficient
 quantity, unknown barcode. Large-touch-target, glove-friendly layout.
@@ -720,10 +731,23 @@ enter quantity, receive the directed putaway bin from T-5.4, confirm by scanning
 **Lot expiry is captured here.** This is the point at which lot data enters the system and the only
 practical moment to capture expiry — FEFO across the whole solution depends on it (Q-15).
 
+**Per-line locations (PF-33).** Under standard Multi-Location Inventory a **single consolidated Item
+Receipt handles lines destined for different locations** (`inventorylocation` per line, read via PF-34's
+`line.inventorylocation || line.location`). Splitting into per-location receipts occurs **only** under
+Centralised Purchasing (`CENTRALIZEPURCHASING`, which must be OFF, PF-28) or cross-subsidiary (Q-52).
+This is **distinct from RQD isolation (T-5.10)** — that is a post-inspection Inventory Transfer, not a
+per-line plan.
+
 Handle the real cases the FRD never mentions: **over-receipt** against PO quantity (tolerance from
-config, else block), **under-receipt** leaving the PO line open, **damaged goods** routed to a
-QUALITY bin (held for disposition, `availableForFulfilment: false`), and receiving against a PO line
-whose item is serialised (reject explicitly per D-08).
+config, else block), **under-receipt** leaving the PO line open, and **damaged goods** routed to a
+QUALITY bin (held for disposition, `availableForFulfilment: false`).
+
+**Serialised lines are a serial ENTRY point (D-29, PF-14).** A PO receipt is one of the three points
+where serials enter the system (with WO completion and RMA). Capture the serial array (`custrecord_se_serials`);
+**validation is the ENTRY form (opposite of movement, Part D):** each entering serial **must NOT already
+exist as an active row** in `customrecord_wms_serial_state` — a re-entered RETIRED serial reactivates its
+row and increments `generation` (never a second row); array length must equal quantity. The committer
+writes one `inventoryassignment` line per serial, quantity 1 (PF-17).
 
 **Acceptance**
 - [ ] GIVEN an open PO, WHEN the operator receives a line with lot and quantity, THEN an Item Receipt posts against that PO and WMS bin state reflects the putaway.
@@ -731,7 +755,8 @@ whose item is serialised (reject explicitly per D-08).
 - [ ] GIVEN a partial receipt, THEN the PO line remains open for the balance.
 - [ ] GIVEN a lot-tracked item, THEN lot number **and expiry date** are mandatory and are written to the inventory number record.
 - [ ] GIVEN damaged goods, THEN they are routed to a QUALITY bin (`availableForFulfilment: false`) and are therefore never allocated — but still counted in reconciliation (T-8.3).
-- [ ] GIVEN a serialised item on the PO, THEN the receipt is rejected with an explicit out-of-scope message rather than a platform error.
+- [ ] GIVEN a serialised item on the PO, THEN the operator captures one serial per unit, the array length equals quantity, and each serial is written as an `inventoryassignment` line (quantity 1) — the item is **received, not rejected** (D-29).
+- [ ] GIVEN an entering serial that already exists as an ACTIVE serial-state row, THEN the receipt is rejected (duplicate live serial); GIVEN a RETIRED serial re-received, THEN its row reactivates with `generation` incremented and no second row is created. *(invariant #21, PF-23)*
 
 ---
 
@@ -857,7 +882,24 @@ the NetSuite posting waits. The floor keeps moving.
 
 ---
 
-### T-5.9 — Inbound exception handling
+### T-4.8 — Reconcile committer task bodies with the AD-level platform rulings *(tracked follow-up)*
+**Depends on:** T-4.1, T-4.6 · **Implements:** D-27 (AD-20/AD-22, invariants #16/#19) · *(new 2026-08-11 — tracked so it cannot be lost)*
+
+**Narrative**
+As the delivery lead, I want the committer task bodies to state the platform-fact rulings they must
+implement, so that a ruling recorded at the architecture level is not silently missing from the task that
+builds it.
+
+**Requirement**
+The platform-facts pass (D-27) recorded four committer behaviours at the AD/invariant level but did **not**
+rewrite the individual T-4.x task bodies. Fold each into the owning task, with acceptance:
+- **On-demand triggering + deployment pool + measured lag window (AD-20/PF-07/PF-08)** -> T-4.6.
+- **Proactive negative pre-check, asymmetric by tracking mode; serial never negative (invariant #19/PF-22, D-29)** -> T-4.7 / T-4.3.
+- **Closed-period pre-check reading `accountingperiod.closed`, Multi-Book book-specific (invariant #16/PF-24/PF-25)** -> T-4.2 / T-2.7.
+- **Kill switch as a config flag read at execution start (AD-22/PF-29)** -> T-4.6.
+
+**Acceptance**
+- [ ] GIVEN each of the four rulings, THEN its owning T-4.x task body states it with a verifiable acceptance criterion, and no ruling lives only at AD level.
 **Depends on:** T-5.5, T-8.1
 
 **Narrative**
@@ -866,11 +908,84 @@ that there is one place to look when something is wrong.
 
 **Requirement**
 Route inbound failures into the T-8.1 exception queue with their own types: `OVER_RECEIPT`,
-`RECEIPT_DISCREPANCY`, `NO_PUTAWAY_LOCATION`, `MISSING_LOT_DATA`, `SERIALISED_ITEM_OUT_OF_SCOPE`,
-`PO_LINE_MISMATCH`. Each carries the source document, operator, item and quantities. Resolution
-actions extend those in T-8.2 with **re-direct putaway** and **accept variance**.
+`RECEIPT_DISCREPANCY`, `NO_PUTAWAY_LOCATION`, `MISSING_LOT_DATA`, `DUPLICATE_LIVE_SERIAL`
+*(a serial entering that already exists as an active row — invariant #21; replaces the withdrawn
+`SERIALISED_ITEM_OUT_OF_SCOPE`, D-29)*, `PO_LINE_MISMATCH`. Each carries the source document, operator,
+item and quantities. Resolution actions extend those in T-8.2 with **re-direct putaway** and **accept
+variance**.
 
 **Acceptance**
 - [ ] GIVEN any inbound failure, THEN exactly one exception exists carrying the source document, operator, item and both expected and actual quantities.
 - [ ] GIVEN a `NO_PUTAWAY_LOCATION` exception, WHEN a supervisor re-directs it to a chosen bin, THEN the receipt completes without re-scanning the goods.
 - [ ] GIVEN inbound and outbound exceptions, THEN both appear in one supervisor queue filterable by direction.
+
+---
+
+### T-5.10 — Receipt with RQD isolation (Inventory Transfer A -> B, and B -> A on review)
+**Depends on:** T-5.5, T-2.7 · **Implements:** D-28, D-30, D-31 · *(new 2026-08-11)*
+
+**Narrative**
+As a receiving operator, I want defective stock isolated into the RQD warehouse after inspection, so that
+it cannot be picked for a customer while staying fully counted.
+
+**Requirement**
+**NetSuite cannot receive a PO marked to Location A into Location B.** So: the WMS **receives 100% into
+Location A**, then the RQD quantity **transfers A -> B as an Inventory Transfer** (committer-posted, D-31).
+**One physical receipt, two WMS events; Location A's count is correct throughout.** The **reverse (B -> A)
+on fit-for-sale review is equally canonical** (D-31). For serialised items, **named serials move** (their
+`custrecord_ss_bin`/`location` update) rather than a quantity.
+
+**Do NOT conflate this with per-line locations (Part G).** A PO may be *planned* to arrive at two
+locations (PF-33) — but the RQD flow exists because **defect status is determined at inspection, AFTER
+receipt, when goods are already physically in Location A.** At PO-entry time nobody knows which units are
+bad, so **nobody may later "optimise" this into a per-line receipt.** Written down so it is not.
+
+**Acceptance**
+- [ ] GIVEN a PO receipt of 100 with 10 later condemned, THEN 100 is received into Location A and 10 transfers A -> B as an Inventory Transfer; Location A's count is correct at every step (one physical receipt, two WMS events).
+- [ ] GIVEN RQD stock in Location B reviewed fit-for-sale, THEN a B -> A Inventory Transfer returns it to an operational bin — as routine as A -> B (D-31).
+- [ ] GIVEN serialised stock isolated, THEN the named serials move to Location B (bin/location updated), not a quantity.
+- [ ] GIVEN the same-roof / same-minute nature, THEN the isolation completes within one committer cycle (it is an Inventory Transfer, not a Transfer Order — D-28).
+
+---
+
+### T-5.11 — Customer return (RMA) receipt
+**Depends on:** T-5.5, T-2.7 · **Implements:** D-32 · *(new 2026-08-11 — resolves Q-45)*
+
+**Narrative**
+As a receiving operator, I want to receive a customer return against its RMA and put it away, so that
+returned stock re-enters the system in a controlled bin with its serials captured.
+
+**Requirement**
+RMA receipt joins PO, TO and WO receipts in Phase 5B. Emits `RECEIPT_RMA`; the committer posts the
+appropriate receipt. Returned goods route by disposition to a **RETURN or QUALITY bin**
+(`availableForFulfilment: false`) pending review; a subsequent Inventory Transfer (T-5.10) moves
+fit-for-sale stock back to an operational bin. **RMA is one of the three serial ENTRY points (D-29)** —
+serial validation is the entry form (must not already exist as an active row).
+
+**Acceptance**
+- [ ] GIVEN an open RMA, WHEN the operator receives the returned line, THEN a receipt posts and the stock lands in a RETURN/QUALITY bin, not an operational one.
+- [ ] GIVEN a serialised return, THEN each serial is captured and validated as an entry (invariant #21), reactivating a RETIRED row with `generation` incremented if it had previously shipped.
+- [ ] GIVEN reviewed-fit return stock, THEN a B -> A / QUALITY -> operational Inventory Transfer returns it to pickable stock (T-5.10).
+
+---
+
+### T-5.12 — Write-off (scrap) event and handler *(carved-out registry change recorded as a task)*
+**Depends on:** T-2.6, T-2.7, T-8.1 · **Implements:** D-33 · *(new 2026-08-11; do NOT edit the carved-out registry module here)*
+
+**Narrative**
+As a warehouse supervisor, I want condemned stock written off with an auditable reason, so that value
+leaving the books always has an authorising name against it.
+
+**Requirement**
+A **`WRITE_OFF` event type**, registered as a handler (**recorded here as a task — the registry module is
+carved out, D-23; do not edit it**). Posts an **Inventory Adjustment (PF-21)** with a **mandatory reason
+code** and **supervisor authorisation** (not a bare operator scan). For serialised items the named serials
+move to **RETIRED** in `customrecord_wms_serial_state` (status change, never deletion — PF-23). **Committer
+ordering: same phase as Inventory Transfers.** Offset GL account and any finance-approval threshold are
+**open (Q-53)** — do not hard-code.
+
+**Acceptance**
+- [ ] GIVEN a write-off without supervisor authorisation or without a reason code, THEN it is refused — no Inventory Adjustment posts.
+- [ ] GIVEN an authorised write-off of serialised units, THEN the named serials move to RETIRED (one row each, not deleted) and an Inventory Adjustment posts.
+- [ ] GIVEN the handler, THEN it is a registry registration with unit tests, and the carved-out guards still pass.
+- [ ] GIVEN the offset GL account is unresolved (Q-53), THEN it is read from config, never hard-coded.

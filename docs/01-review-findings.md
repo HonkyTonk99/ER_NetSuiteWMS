@@ -324,8 +324,9 @@ target account and never will.
 
 **Correction (AD-16):** the ledger interface is three transaction shapes — Item Fulfillment,
 Inventory Adjustment, Inventory Transfer — and bin movements post nothing. The only variability is
-per-item tracking mode — **PLAIN or LOT** (SERIAL is out of scope and *rejected* by the adapter, D-08),
-resolved from the item record by the adapter (T-2.7). No bin-number field appears anywhere in the codebase.
+per-item tracking mode — **PLAIN, LOT or SERIAL** (all in scope — D-29 supersedes D-08; a serial posts
+one `inventoryassignment` line per unit, PF-17), resolved from the item record by the adapter (T-2.7). No
+bin-number field appears anywhere in the codebase.
 
 ### F-20 · S2 · Back-office movements cannot be attributed to a bin → `T-10.2`, `T-8.3`
 
@@ -350,21 +351,21 @@ option is gone, so the control changes shape (`06-netsuite-boundary.md` §6):
 This is the largest operational risk D-07 introduces, and it is managed by process at least as much
 as by code.
 
-### F-21 · ~~S2~~ **CLOSED** · Serial items break the throughput model → `T-0.1`, `T-2.7`
+### F-21 · S2 · **RE-OPENED (D-29)** · Serial items drive scan volume → `T-0.1`, `T-0.2`, `T-2.7`
 
-> **Closed 2026-08-08 by D-08 — serial numbers are out of scope.** Retained for traceability. The
-> analysis stands and should be re-read if serialised items are ever brought into scope, because the
-> scan-volume effect is large and non-obvious.
+> **RE-OPENED 2026-08-11 by D-29 — serial is IN scope (D-08 superseded).** The analysis below is live
+> again: serial scan volume is a **real sizing input**. T-0.1's census must count serialised items and
+> their line share, and T-0.2 must size the concurrency budget and staffing on **one scan per unit** for
+> serialised lines, not one per line.
 
 Doc A sizes everything on ~one scan per order line. Serial items need one scan per *unit*, so a line
-for 10 serialised units is 10 scans. At 20% serial lines averaging quantity 5 that would have been
-50,000 extra scans a day — **double the assumed volume** — silently invalidating the concurrency
-budget, the load-test profile and the staffing model.
+for 10 serialised units is 10 scans. At 20% serial lines averaging quantity 5 that is **~50,000 extra
+scans a day — double the assumed volume** — so the concurrency budget, the load-test profile and the
+staffing model must all account for it (T-0.2).
 
-**Residual requirement:** tracking modes reduce to **PLAIN** and **LOT**. But a serialised item may
-still *exist* in the NetSuite account, and if one reaches a WMS-managed location the commit will
-fail in a confusing way. T-2.7 must **detect and reject** a serialised item explicitly, with a clear
-exception, rather than attempting to post it. T-0.1 confirms none are present in scope.
+**Requirement (restated):** tracking modes are **PLAIN, LOT and SERIAL** (D-29). A serialised item
+reaching a WMS-managed location is **received, picked and shipped** through the serial flows (Part D of
+the serial reissue) — never rejected. T-0.1's census quantifies the serial share so T-0.2 sizes correctly.
 
 ### F-22 · S1 · WMS allocation can hand out stock NetSuite has already committed elsewhere → `T-6.2`, `T-7.1`, `T-4.2`
 
