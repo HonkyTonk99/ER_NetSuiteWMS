@@ -17,6 +17,15 @@ installed SuiteApps, features or preferences. Therefore:
 Account-specific unknowns that these facts *size against* (service tier, SuiteCloud Plus count, installed
 SuiteApps, Multi-Book, OneWorld) are tracked as **Sheet C** questions in `04-open-questions.md`, not here.
 
+> **Trust caveat — accept the mechanism, review the code.** **PF-14a** was answered by the same
+> documentation-grounded tooling, and its accompanying **sample code contained two errors**: it returned
+> `plain_serialized` for serialised items (matching no schema value, routing serial down the plain path)
+> and it **defaulted an unrecognised type to plain** (silent ledger corruption). The *mechanism*
+> (`search.lookupFields` on `recordtype`) was accepted; the *implementation* was rewritten
+> (`wms_lib_item_mode.js`: serialised -> `SERIAL`; unknown -> `ERR_WMS_UNKNOWN_ITEM_TYPE`, never a
+> default). **This is the second time a confident documentation answer arrived with faulty code attached**
+> — treat the fact as the deliverable and the sample as a draft to verify.
+
 ---
 
 ## Concurrency, transport and governance
@@ -52,6 +61,7 @@ SuiteApps, Multi-Book, OneWorld) are tracked as **Sheet C** questions in `04-ope
 | # | Fact | Status | Depends on it |
 |---|---|---|---|
 | **PF-14** | **Item tracking mode is the RECORD TYPE, not a field.** Six types: `inventoryitem`, `lotnumberedinventoryitem`, `serializedinventoryitem`, and the assembly equivalents `assemblyitem`, `lotnumberedassemblyitem`, `serializedassemblyitem`. The item cache resolves **`recordtype`** → PLAIN / LOT / SERIAL. | CONFIRMED | item cache (§3.x), AD-16/T-2.7 |
+| **PF-14a** | **How to READ the record type:** `search.lookupFields({ type: search.Type.ITEM, id, columns: ['recordtype'] })` returns the specific subtype string (one of the six, PF-14) at **1 governance unit**. The coarse **`type`/`itemtype`** column returns only a category (`InvtPart`, `Assembly`) and **cannot distinguish tracking mode — do not use it for this.** `record.load` is a documented anti-pattern for a field read; **SuiteQL costs 10 units vs lookupFields' 1** (PF-06). | CONFIRMED (documentation); **confirm `search.Type.ITEM` works across the six subtypes during the sandbox session** | `wms_lib_item_mode.js`, committer, item cache |
 | **PF-15** | **`N/cache`**: TTL **≥ 300 s**; **no persistence guarantee** (early eviction under memory pressure); value **≤ 500 KB**; key **≤ 4 KB**. Needs a loader and must tolerate a cold miss on any call; a >500 KB payload must be chunked. | CONFIRMED | item cache, config cache |
 | **PF-16** | Inventory detail is the **`inventorydetail` subrecord's `inventoryassignment` sublist**: **`receiptinventorynumber`** when stock enters, **`issueinventorynumber`** when stock leaves, plus **`quantity`**. **The NetSuite bin-number and destination-bin-number fields are not used** (Bin Management off — invariant #13 unaffected). **Standard mode works, including on a transformed record — dynamic mode is not required.** | CONFIRMED | T-2.7, AD-16, invariant #13 |
 | **PF-17** | **Serial**: one `inventoryassignment` line per serial, **`quantity` exactly 1**. **Lot**: one line, **quantity may exceed 1 and may be fractional**. | CONFIRMED | T-2.7, T-9 (serial), lot handling |
