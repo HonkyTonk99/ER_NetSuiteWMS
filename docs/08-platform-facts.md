@@ -105,6 +105,24 @@ numbering differs from this file. The mapping actually used: "six record types" 
 receipt" = **PF-33** (not PF-21); "line location shapes" = **PF-34** (not PF-19). PF-16/17/18/22/23 already
 matched.*
 
+## Vertical-slice measurements — SLICE-PENDING (fill from the run, docs/09)
+
+These replace estimates once the slice runs in-account. **Left deliberately empty — no number here has
+been measured or invented.** The developer fills them per the docs/09 runbook.
+
+| Measurement | Estimate it supersedes | Measured value | Status |
+|---|---|---|---|
+| Governance units — one scan-event `record.create` | ~2 (PF-02 sizing / F-29) | _____ | **SLICE-PENDING** |
+| Governance units — one full committer cycle per receipt | (unmeasured) | _____ | **SLICE-PENDING** |
+| Governance units — one bin-state `load`+`save` | 6 (PF-12, documented) | _____ (confirm) | **SLICE-PENDING (Day 4)** |
+| Latency — scan submitted -> Item Receipt posted (best / worst of >= 20) | P95 < 5 min (invariant #1, assumed) | _____ / _____ | **SLICE-PENDING** |
+| Largest batch comfortably inside the 1,000-unit Suitelet budget | default 50 (F-29/D-34) | _____ | **SLICE-PENDING** |
+| Concurrency — 5-10 tabs at the pool limit; does client retry hold | PF-01/PF-04 behaviour | _____ | **SLICE-PENDING** |
+| IndexedDB survives app kill + browser restart, queue intact | assumed (D-13) | _____ | **SLICE-PENDING (Day 5)** |
+
+**Anything that differs from a CONFIRMED fact above is a finding — record it here and flag it, because a
+wrong platform fact is worth more than a clean run (docs/09).**
+
 ## Deployment (from the developer — both deployment-critical)
 
 | # | Fact | Status | Depends on it |

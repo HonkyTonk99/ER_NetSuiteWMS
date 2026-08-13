@@ -1,0 +1,33 @@
+<!--
+  Ingest Suitelet script + deployment (vertical slice, docs/09 Day 1/2).
+  Authored WITHOUT an account - validate before deploy.
+
+  DEPLOYMENT CONFIG IS THE DAY-1 (T1) PROOF. Set/verify these on the deployment
+  record in-account (docs/09 Runbook step 2):
+    - Available Without Login  = ON  (the deployment is reachable with no session)
+    - Execute As Role          = the dedicated LEAST-PRIVILEGE role, NEVER
+                                 Administrator (PF-36) - create scan events +
+                                 read reference only (AD-19)
+    - Audience                 = MUST include the `Online Form User` role (PF-35);
+                                 omit it on a Released deployment and NetSuite
+                                 blocks the request before the script runs
+                                 ("You do not have privileges to view this page")
+  The scriptid below (executeasrole) is a placeholder - point it at the real
+  least-privilege role once created. If SDF cannot express Available-Without-Login
+  / Audience in this account's version, set them in the UI and record that in the
+  runbook; the code does not change.
+-->
+<suitelet scriptid="customscript_wms_sl_scan_ingest">
+    <name>WMS Scan Ingest</name>
+    <scriptfile>[/SuiteScripts/WMS/wms_sl_scan_ingest.js]</scriptfile>
+    <scriptdeployments>
+        <scriptdeployment scriptid="customdeploy_wms_sl_scan_ingest">
+            <status>RELEASED</status>
+            <isdeployed>T</isdeployed>
+            <loglevel>DEBUG</loglevel>
+            <allroles>F</allroles>
+            <!-- PF-36: replace with the dedicated least-privilege role, not Administrator -->
+            <executeasrole>[scriptid=customrole_wms_ingest]</executeasrole>
+        </scriptdeployment>
+    </scriptdeployments>
+</suitelet>

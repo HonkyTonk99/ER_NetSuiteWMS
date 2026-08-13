@@ -1,0 +1,33 @@
+<!--
+  Committer Map/Reduce script + deployment pool (vertical slice, docs/09 Day 3).
+  Authored WITHOUT an account - validate before deploy.
+
+  Triggering (PF-08 / AD-20): the Suitelet submits task.MapReduceScriptTask with
+  the scriptId and NO deploymentId, so NetSuite routes to an idle deployment.
+  NetSuite cannot submit to a deployment already running, so a POOL of
+  Not-Scheduled deployments provides concurrency (pool size is a documented number,
+  here 2 for the slice). One SCHEDULED deployment sweeps as a fallback for anything
+  the on-demand path missed (set its recurrence to the 15-minute floor in-account).
+-->
+<mapreducescript scriptid="customscript_wms_mr_committer">
+    <name>WMS Committer</name>
+    <scriptfile>[/SuiteScripts/WMS/wms_mr_committer.js]</scriptfile>
+    <scriptdeployments>
+        <scriptdeployment scriptid="customdeploy_wms_mr_committer_1">
+            <status>NOTSCHEDULED</status>
+            <isdeployed>T</isdeployed>
+            <loglevel>AUDIT</loglevel>
+        </scriptdeployment>
+        <scriptdeployment scriptid="customdeploy_wms_mr_committer_2">
+            <status>NOTSCHEDULED</status>
+            <isdeployed>T</isdeployed>
+            <loglevel>AUDIT</loglevel>
+        </scriptdeployment>
+        <!-- Fallback sweep: set recurrence to every 15 minutes in-account (PF-07). -->
+        <scriptdeployment scriptid="customdeploy_wms_mr_committer_sweep">
+            <status>SCHEDULED</status>
+            <isdeployed>T</isdeployed>
+            <loglevel>AUDIT</loglevel>
+        </scriptdeployment>
+    </scriptdeployments>
+</mapreducescript>

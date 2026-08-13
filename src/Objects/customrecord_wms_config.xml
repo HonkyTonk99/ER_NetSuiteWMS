@@ -1,0 +1,32 @@
+<!--
+  customrecord_wms_config - tuning values, so no threshold/capacity/TTL/batch size
+  is hard-coded (invariant #9; docs/03 section 3.10). Authored WITHOUT an account -
+  validate before deploy. Slice rows needed: ingest batch size, bin-state retry
+  bound, committer polling-fallback interval. Rows are DATA (created in-account or
+  by a seed step), not SDF objects; this file deploys the record TYPE only.
+  Key/value shape keeps the slice minimal; the full model may promote hot values
+  to typed fields.
+-->
+<customrecordtype scriptid="customrecord_wms_config">
+    <recordname>WMS Config</recordname>
+    <accesstype>NONENEEDED</accesstype>
+    <allowuiaccess>T</allowuiaccess>
+    <enableoptimisticlocking>T</enableoptimisticlocking>
+    <enablesystemnotes>T</enablesystemnotes>
+    <includename>T</includename>
+    <isinactive>F</isinactive>
+    <customrecordcustomfields>
+        <customrecordcustomfield scriptid="custrecord_cfg_key">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Key</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_cfg_value">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Value</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_cfg_location">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Location override (internal id; blank = global)</label>
+        </customrecordcustomfield>
+    </customrecordcustomfields>
+</customrecordtype>

@@ -266,9 +266,12 @@ global-defaults + optional per-location override.
 
 **Added 2026-08-11 (D-34 — serial share is a parameter, 100% envelope):** **wave-scoped serial cache size**;
 **serial-scan-volume model inputs** (units-per-serialised-line multiplier used by T-0.2); **handheld
-multi-scan batch** (serials collected per screen); and the **`SERIAL_WRONG_BIN` discrepancy escalation
-threshold** (per location per day, §3.13b). The ingest batch size above is additionally bounded by the
-**10 MB Map/Reduce value limit** at high serial share (D-34/PF-10), not only by governance units.
+multi-scan batch** (serials collected per screen). The ingest batch size above is additionally bounded by
+the **10 MB Map/Reduce value limit** at high serial share (D-34/PF-10), not only by governance units.
+
+**`SERIAL_WRONG_BIN` escalation (§3.13b) — five config values:** integrity-ratio threshold (~3%),
+process-ratio threshold (~6%), the window length for each, and the minimum denominator before each ratio
+is evaluated (a ratio over a tiny denominator is noise).
 
 **Not a single global row (D-14).** There is a **global-defaults row** plus **optional per-location
 override rows** (`custrecord_cfg_location` — blank on the global row, set on an override). **Precedence:
@@ -361,7 +364,7 @@ wrong" from "the action is wrong."** *Data-wrong* lets the work **continue** and
 |---|---|---|
 | `ERR_WMS_SERIAL_ALREADY_LIVE` / `SERIAL_ALREADY_LIVE` | Receiving a serial that already has an **active** row | **Stop.** Operator re-checks the label; if it persists it is a supplier duplicate -> supervisor exception |
 | `ERR_WMS_SERIAL_UNKNOWN` / `SERIAL_UNKNOWN` | Scanned serial has **no row at all** | **Stop, and do NOT create one on the fly.** Exception carries a reconciliation action — does this serial exist in NetSuite but not the WMS? (stock that entered outside the WMS; needs an **adopt path**, Q-54, especially at cutover / parallel running) |
-| `ERR_WMS_SERIAL_WRONG_BIN` / `SERIAL_WRONG_BIN` | Serial exists, **IN_STOCK**, but recorded in a **different bin** | **Continue** — the physical world wins. Accept the pick, move the serial to reflect reality, correct both bins' counts, raise a **discrepancy** exception (expected-vs-actual). Blocking here punishes an operator for someone else's unrecorded move. **Threshold: > N per location per day escalates** (config) |
+| `ERR_WMS_SERIAL_WRONG_BIN` / `SERIAL_WRONG_BIN` | Serial exists, **IN_STOCK**, but recorded in a **different bin** | **Continue** — the physical world wins. Accept the pick, move the serial to reflect reality, correct both bins' counts, raise a **discrepancy** exception (expected-vs-actual). Blocking here punishes an operator for someone else's unrecorded move. **Escalation is TWO ratios (below), alert on either.** |
 | `ERR_WMS_SERIAL_NOT_AVAILABLE` / `SERIAL_NOT_AVAILABLE` | Serial exists but status is **SHIPPED / PICKED / QUARANTINE / RETIRED** | **Stop, with the sub-case named** in the message: SHIPPED = an unreceived return or duplicate label; PICKED = another wave has it; QUARANTINE = the unit-level "don't ship defective goods" guard; RETIRED = written off. Each needs a different human response |
 | `ERR_WMS_SERIAL_WRONG_ITEM` / `SERIAL_WRONG_ITEM` | Serial exists but against a **different item** than the line | **Stop.** Serials are unique per item, so the same string may legitimately exist on two items — this is the operator holding the wrong product |
 | `ERR_WMS_SERIAL_COUNT_MISMATCH` / `SERIAL_COUNT_MISMATCH` | Serials scanned **!= line quantity** | **Stop at the handheld** — the client must not allow submission; the server validates as a backstop |
@@ -370,6 +373,18 @@ wrong" from "the action is wrong."** *Data-wrong* lets the work **continue** and
 distinguish "unknown serial" from "valid serial not in this wave."** **Offline, the message is *"not
 expected in this wave"*** — the handheld must **not assert `SERIAL_UNKNOWN` offline.** Definitive
 classification (unknown vs elsewhere) happens at **ingest**, where the full serial state is available.
+
+**`SERIAL_WRONG_BIN` escalation is TWO ratios, alert on either (sponsor figures):**
+- **Integrity ratio** = *distinct serials with an unresolved discrepancy* ÷ *total serials in stock* — the
+  **tighter** threshold, sponsor's figure **~3%**. Measures how much of the serialised population is
+  currently untrustworthy.
+- **Process ratio** = *wrong-bin events* ÷ *total serial movements in the window* — the **looser**
+  threshold, sponsor's figure **~6%**. Measures how noisy the process is right now.
+
+**Both thresholds, both window lengths, and a minimum denominator before each ratio is evaluated are
+`customrecord_wms_config` values** (invariant #9) — a ratio over a tiny denominator is noise, so it is not
+alerted until the denominator clears its floor. The two answer different questions (standing data quality
+vs current process noise), which is why one threshold cannot serve both.
 
 ## 3.14 Site — **new (D-30); a custom LIST field on Location (sponsor ruling, not a record)**
 

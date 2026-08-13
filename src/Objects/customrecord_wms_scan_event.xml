@@ -1,0 +1,67 @@
+<!--
+  customrecord_wms_scan_event - the immutable scan-event record (vertical slice,
+  docs/09; full model in docs/03 section 3.1). Authored WITHOUT an account:
+  run `suitecloud project:validate --server` before deploy; validation will
+  surface any field-type/tag corrections this account's SDF version needs.
+  Slice fields only - item/bin/location/source-doc carry internal ids as text to
+  minimise deploy risk; the full model uses List/Record selects.
+  externalid (client UUID) is the standard field - platform-unique (PF-13), set by
+  the ingest Suitelet; not declared here.
+-->
+<customrecordtype scriptid="customrecord_wms_scan_event">
+    <recordname>WMS Scan Event</recordname>
+    <accesstype>NONENEEDED</accesstype>
+    <allowattachments>F</allowattachments>
+    <allowinlineediting>F</allowinlineediting>
+    <allowuiaccess>T</allowuiaccess>
+    <enableoptimisticlocking>T</enableoptimisticlocking>
+    <enablesystemnotes>T</enablesystemnotes>
+    <includename>T</includename>
+    <isinactive>F</isinactive>
+    <customrecordcustomfields>
+        <customrecordcustomfield scriptid="custrecord_se_type">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Event Type</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_se_sku">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Item (internal id)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_se_qty">
+            <fieldtype>FLOAT</fieldtype>
+            <label>Quantity</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_se_source_bin">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Source Bin (internal id)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_se_location">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Location (internal id)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_se_source_doc">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Source Document (internal id)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_se_status">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Status</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_se_scan_ts">
+            <fieldtype>DATETIMETZ</fieldtype>
+            <label>Scan Timestamp</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_se_payload">
+            <fieldtype>CLOBTEXT</fieldtype>
+            <label>Raw Payload</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_se_error_name">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Error Name</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_se_error_msg">
+            <fieldtype>CLOBTEXT</fieldtype>
+            <label>Error Message</label>
+        </customrecordcustomfield>
+    </customrecordcustomfields>
+</customrecordtype>
