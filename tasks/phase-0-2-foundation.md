@@ -28,9 +28,11 @@ with no manual account reconciliation.
 
 *Item census.* For every in-scope item, classify as **PLAIN, LOT or SERIAL** (the record type, PF-14)
 and report by item count **and by share of order lines**. **Serial is IN scope (D-29 — supersedes
-D-08).** The serial share is a **live sizing input (F-21 re-opened):** serialised lines are one scan per
-*unit*, not per line, so T-0.2 sizes the concurrency budget and staffing on the measured serial volume.
-Also count serialised units in WMS-managed locations so the serial_state seed (§3.13) is sized.
+D-08).** **The census TUNES configuration, it does not GATE the design (D-34):** the design must function
+at **up to 100% serialised**, so the serial share is a **parameter** — it sets the wave-scoped serial
+cache size, the T-0.2 scan-volume model, the handheld multi-scan flow and the batch size, but no design
+decision waits on the number. Also count serialised units in WMS-managed locations so the serial_state
+seed (§3.13) is sized.
 
 **Costing is not audited and not designed around (D-11).** NetSuite runs costing; the WMS supplies
 quantity, date and lot and has no opinion about valuation. Record the method for information only if
@@ -60,9 +62,12 @@ production.
 **Requirement**
 Measure current concurrency consumption over a representative week (Application Performance
 Management / concurrency monitor). Model peak scan demand **from the T-0.1 item census, not from the
-FRD's figures**, which are unverified. **Serial is IN scope (D-29), so the one-scan-per-line assumption
-does NOT hold for serialised lines — size on one scan per unit for the serialised share (F-21).** Take
-the serial share from the census, not on trust.
+FRD's figures**, which are unverified. **Serial is IN scope (D-29); the scan-volume model is a
+PARAMETER with a design envelope (D-34) — it must hold at up to 100% serialised.** For serialised lines
+size on **one scan per unit**, and note the payload shape (D-34): **N serialised units on a line are ONE
+event carrying N serials**, not N events — one record, one bin-state update, one governance charge — so
+the **batch size is bounded by the 10 MB Map/Reduce value limit (PF-10)**, not only by governance units,
+at high serial share. The census tunes these values; it does not gate the design.
 Slots required = req/s × mean server seconds. **Include inbound receipt scanning (Phase 5B)**, which
 the FRD's model excludes entirely. **The scan endpoint is a Suitelet, not a RESTlet (D-19)**
 — per-invocation governance and concurrent-slot cost are the same, so the numbers are unchanged; only
@@ -168,10 +173,19 @@ SuiteCloud CLI project scaffolded; git repo with branch policy; DEV and UAT sand
 and refreshed; CI running lint + unit tests on push; a documented deploy command per environment;
 jest harness with SuiteScript module stubs so pure logic is unit-testable.
 
+**Suitelet deployment checklist (developer platform facts — both fail silently if missed):**
+- **The deployment's Audience subtab MUST include the `Online Form User` role (PF-35).** Omit it on a
+  Released deployment and NetSuite blocks the request *before the script runs* — *"You do not have
+  privileges to view this page"* — which reads as a script failure but is a deployment-config error. This
+  is exactly what T-0.8's **T1** proves.
+- **The `Execute As Role` MUST be the dedicated least-privilege role, NOT `Administrator` — which the
+  platform will not let you select anyway (PF-36).** Reinforces AD-19.
+
 **Acceptance**
 - [ ] GIVEN a clean clone, WHEN the documented deploy command is run against DEV, THEN the project deploys with no manual account changes.
 - [ ] GIVEN a pull request, WHEN CI runs, THEN lint and unit tests execute and block merge on failure.
 - [ ] GIVEN a new developer, WHEN they follow the README, THEN they reach a working DEV deployment without tribal knowledge.
+- [ ] GIVEN the ingest Suitelet's Released deployment, THEN its Audience includes `Online Form User` (PF-35) and its Execute-As role is the dedicated least-privilege role, not Administrator (PF-36) — verified by the T-0.8/T1 logged-out create.
 
 ---
 
@@ -646,7 +660,11 @@ enforce opposite serial rules without a special case leaking into the dispatcher
 every serial resolves; no serial already sits elsewhere (invariant #21)**. **Entry vs movement is
 OPPOSITE (Part D):** an **entering** serial (receipts) must **not** already exist as an active row; a
 **referenced** serial (PICK/PUTAWAY/BIN_TRANSFER) **must** exist and be **in the bin the operator claims**.
-A **lot** follows the same movement rule but carries a quantity rather than being fixed at 1 (PF-31). The
+A **lot** follows the same movement rule but carries a quantity rather than being fixed at 1 (PF-31).
+**Verdicts use the typed serial exception set (data model §3.13b, D-29), applying the data-wrong vs
+action-wrong split:** `SERIAL_WRONG_BIN` is *data-wrong* — the verdict **continues** (accept, move the
+serial, raise a discrepancy); `SERIAL_ALREADY_LIVE` / `SERIAL_UNKNOWN` / `SERIAL_NOT_AVAILABLE` /
+`SERIAL_WRONG_ITEM` / `SERIAL_COUNT_MISMATCH` are *action-wrong* — the verdict **stops**. The
 registry module is carved out (D-23) — **this is a task, run on its own pass; do not edit the module here.**
 
 **Acceptance**

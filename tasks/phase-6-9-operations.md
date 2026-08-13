@@ -75,6 +75,12 @@ builds candidate pairs **within a location**. `summarize` runs `cluster()` and c
 `customrecord_wms_wave_pick` records with **`custrecord_wave_location` set**, orders, zone, ship-by,
 similarity score, line and unit counts, status Pending. Orders already on an open wave are excluded.
 
+**Holding locations are excluded from the default wave sweep (D-30).** `getInputData` filters candidate
+lines to **`custrecord_loc_class === OPERATIONAL`** locations. A wave may be built against a **HOLDING**
+location (RQD) **only when an order line explicitly names it** (e.g. a deliberate ship-from-RQD of a defect
+giveaway — the sponsor's own example) — never as part of the default sweep. Holding-location stock also
+**never counts toward an operational location's availability.**
+
 **Allocation and waving key on the LINE's location, not the order header (D-30/PF-18/PF-34).** The
 Q-32 "refuse a multi-location order and raise an exception" recommendation is **withdrawn** — a sales
 order whose lines carry different locations is a **supported NetSuite configuration (PF-18), not an
@@ -101,6 +107,7 @@ mis-set cap that excludes real signal is visible rather than silent.
 - [ ] GIVEN two orders that share every SKU but draw from **different locations**, WHEN the pipeline runs, THEN they are placed in **separate** waves.
 - [ ] GIVEN **one sales order whose lines span two locations**, WHEN the pipeline runs, THEN it generates work in **both** locations (each location's lines wave independently) and is **not** refused — the order completes when both are picked. *(D-30, PF-18; Q-32 refusal withdrawn)*
 - [ ] GIVEN a line whose location is on `inventorylocation` in one case and `location` in another, THEN the same helper reads both (PF-34).
+- [ ] GIVEN stock in a HOLDING location and an ordinary order, WHEN the default sweep runs, THEN that location's lines are **excluded** and its stock does not count toward availability; GIVEN an order line that **explicitly names** the holding location, THEN a wave may be built against it. *(D-30)*
 - [ ] GIVEN an order already assigned to an open wave, WHEN clustering runs, THEN it is not assigned to a second wave.
 - [ ] GIVEN an open **Transfer Order** with committed lines at its source location, WHEN the pipeline runs, THEN its lines are eligible and cluster through the **same engine** as sales-order lines (parameterised by transaction type), producing a wave in the source location. *(D-22)*
 - [ ] GIVEN a sales order line with zero committed quantity, WHEN clustering runs, THEN it is excluded from every wave.

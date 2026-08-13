@@ -19,9 +19,24 @@ conventions in `CLAUDE.md` apply automatically.
 > - **Q-32 refusal withdrawn (Part G):** a multi-location sales order is supported, not an error — waving
 >   keys on the line's location.
 > - Platform facts recorded in `docs/08` (D-27); ledger shapes CONFIRMED.
-> These are **additions to Phase 5B and Phases 6–7 scope and to the estimate** — serial handling touches
-> every flow. Read [`docs/05-decisions-log.md`](05-decisions-log.md) and
+> These touch Phase 5B and Phases 6–7. **The sponsor holds the timeline, so this plan carries no
+> estimates — it keeps a *scope ledger* instead (below): what was added, on whose ruling, and why.
+> Traceability, not scheduling.** Read [`docs/05-decisions-log.md`](05-decisions-log.md) and
 > [`docs/08-platform-facts.md`](08-platform-facts.md) first.
+
+### Scope ledger *(dated; traceability, not scheduling — the sponsor holds the timeline)*
+
+| Date | Added | Ruling | Why |
+|---|---|---|---|
+| 2026-08-08 | Inbound receipt & putaway (Phase 5B) | D-09 | The WMS receives PO/TO/WO, not just ships |
+| 2026-08-09 | Multi-location (location as session context) | D-14 | Multiple warehouses in scope |
+| 2026-08-09 | Transfer Order **outbound** (pick/stage/ship) | D-22 | The client moves stock between locations |
+| 2026-08-11 | **Serialised items** (schema, invariants #21/#22, flows, cache) | **D-29** | Serial stock is stocked/picked/shipped; D-08 was wrong |
+| 2026-08-11 | **Site vs NetSuite-location split**; movement rules by scope | **D-30, D-31** | One building can hold several NetSuite locations (good + RQD) |
+| 2026-08-11 | **Customer returns (RMA) receipt** | **D-32** | Returns re-enter through the WMS; a serial entry point |
+| 2026-08-11 | **Inventory write-off** path (authorised) | **D-33** | Condemned stock leaves the books with an authorising name |
+| 2026-08-11 | **Location class** (operational/holding) reads across picker/wave/replen/putaway | **D-30/D-33** | RQD stock must not be picked, sourced or targeted as good |
+| 2026-08-11 | Serial share as a **parameter** (100% envelope) | **D-34** | Every account differs; census tunes config, not gates design |
 >
 > **Revision 8 — 2026-08-09.** The decisions log now runs to **D-22** and is authoritative; this plan
 > is a snapshot. Since Revision 6: multi-location (D-14) and its follow-ups (D-20 location-switch
@@ -50,7 +65,7 @@ conventions in `CLAUDE.md` apply automatically.
 | [`docs/02-architecture.md`](02-architecture.md) | 18 architecture decisions that override or extend the FRD |
 | [`docs/03-data-model.md`](03-data-model.md) | Consolidated schema (both addenda merged, plus review-driven additions) |
 | [`docs/04-open-questions.md`](04-open-questions.md) | 14 open decisions; **1 hard blocker** — the handheld platform |
-| [`CLAUDE.md`](../CLAUDE.md) | Coding conventions and 22 non-negotiable invariants |
+| [`CLAUDE.md`](../CLAUDE.md) | Coding conventions and 23 non-negotiable invariants |
 
 ## Task backlog
 

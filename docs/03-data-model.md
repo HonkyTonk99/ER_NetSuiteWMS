@@ -213,7 +213,7 @@ Implied by Doc B §2.2 but never defined as a record. Explicit here.
 |---|---|
 | `custrecord_exc_source_event` | List/Record → Scan Event |
 | **`custrecord_exc_location`** | List/Record → Location — **new (D-14), mandatory.** So the exception queue can be filtered and worked by the warehouse that owns it |
-| `custrecord_exc_type` | INVARIANT_VIOLATION, POST_FAILURE, SHORT_PICK, OVER_PICK, RECONCILIATION_DRIFT, REPLEN_BLOCKED, **UNATTRIBUTED_MOVEMENT, OVER_RECEIPT, RECEIPT_DISCREPANCY, NO_PUTAWAY_LOCATION, MISSING_LOT_DATA, SERIALISED_ITEM_OUT_OF_SCOPE, PO_LINE_MISMATCH, CLOSED_PERIOD_POSTING, COMMITMENT_EXCEEDED, DEFERRAL_TIMEOUT, NEGATIVE_BIN_STATE, CROSS_LOCATION_MOVE** *(LOCK_TIMEOUT, STALE_LOCK removed — locks withdrawn, D-12)* |
+| `custrecord_exc_type` | INVARIANT_VIOLATION, POST_FAILURE, SHORT_PICK, OVER_PICK, RECONCILIATION_DRIFT, REPLEN_BLOCKED, **UNATTRIBUTED_MOVEMENT, OVER_RECEIPT, RECEIPT_DISCREPANCY, NO_PUTAWAY_LOCATION, MISSING_LOT_DATA, PO_LINE_MISMATCH, CLOSED_PERIOD_POSTING, COMMITMENT_EXCEEDED, DEFERRAL_TIMEOUT, NEGATIVE_BIN_STATE, CROSS_LOCATION_MOVE**, **the serial set (D-29, §3.13b): `SERIAL_ALREADY_LIVE`, `SERIAL_UNKNOWN`, `SERIAL_WRONG_BIN`, `SERIAL_NOT_AVAILABLE`, `SERIAL_WRONG_ITEM`, `SERIAL_COUNT_MISMATCH`** *(`SERIALISED_ITEM_OUT_OF_SCOPE` removed — D-29 supersedes D-08; `LOCK_TIMEOUT`/`STALE_LOCK` removed — D-12)* |
 | `custrecord_exc_severity` | LOW, MEDIUM, HIGH, CRITICAL |
 | `custrecord_exc_status` | OPEN, IN_PROGRESS, RESOLVED, WRITTEN_OFF |
 | `custrecord_exc_assigned_to` | List/Record → Employee |
@@ -263,6 +263,12 @@ thresholds. *(`lock TTL seconds` removed — locks withdrawn, D-12.)*
 **`custrecord_cfg_kill_switch`** (a boolean read at the start of every committer execution — the only
 reliable pause, AD-22/PF-29); **governance-reconciliation tolerance** (default ±25%, T-12.1/D-23). All
 global-defaults + optional per-location override.
+
+**Added 2026-08-11 (D-34 — serial share is a parameter, 100% envelope):** **wave-scoped serial cache size**;
+**serial-scan-volume model inputs** (units-per-serialised-line multiplier used by T-0.2); **handheld
+multi-scan batch** (serials collected per screen); and the **`SERIAL_WRONG_BIN` discrepancy escalation
+threshold** (per location per day, §3.13b). The ingest batch size above is additionally bounded by the
+**10 MB Map/Reduce value limit** at high serial share (D-34/PF-10), not only by governance units.
 
 **Not a single global row (D-14).** There is a **global-defaults row** plus **optional per-location
 override rows** (`custrecord_cfg_location` — blank on the global row, set on an override). **Precedence:
@@ -345,18 +351,44 @@ delete ever**; **movement history keys on (row, generation)** so prior lifecycle
 separate. *Acceptance:* retire then re-receive the same serial -> one row, generation incremented, earlier
 history intact and attributed to the earlier generation.
 
-## 3.14 Site — **new (D-30)**
+## 3.13b Serial validation exceptions — **new (D-29)**
+
+A single generic serial error is replaced by a typed set. **Governing principle: distinguish "the data is
+wrong" from "the action is wrong."** *Data-wrong* lets the work **continue** and corrects the record;
+*action-wrong* **stops**, because proceeding compounds a real-world error.
+
+| Error (client) / exception type | Trigger | Resolution |
+|---|---|---|
+| `ERR_WMS_SERIAL_ALREADY_LIVE` / `SERIAL_ALREADY_LIVE` | Receiving a serial that already has an **active** row | **Stop.** Operator re-checks the label; if it persists it is a supplier duplicate -> supervisor exception |
+| `ERR_WMS_SERIAL_UNKNOWN` / `SERIAL_UNKNOWN` | Scanned serial has **no row at all** | **Stop, and do NOT create one on the fly.** Exception carries a reconciliation action — does this serial exist in NetSuite but not the WMS? (stock that entered outside the WMS; needs an **adopt path**, Q-54, especially at cutover / parallel running) |
+| `ERR_WMS_SERIAL_WRONG_BIN` / `SERIAL_WRONG_BIN` | Serial exists, **IN_STOCK**, but recorded in a **different bin** | **Continue** — the physical world wins. Accept the pick, move the serial to reflect reality, correct both bins' counts, raise a **discrepancy** exception (expected-vs-actual). Blocking here punishes an operator for someone else's unrecorded move. **Threshold: > N per location per day escalates** (config) |
+| `ERR_WMS_SERIAL_NOT_AVAILABLE` / `SERIAL_NOT_AVAILABLE` | Serial exists but status is **SHIPPED / PICKED / QUARANTINE / RETIRED** | **Stop, with the sub-case named** in the message: SHIPPED = an unreceived return or duplicate label; PICKED = another wave has it; QUARANTINE = the unit-level "don't ship defective goods" guard; RETIRED = written off. Each needs a different human response |
+| `ERR_WMS_SERIAL_WRONG_ITEM` / `SERIAL_WRONG_ITEM` | Serial exists but against a **different item** than the line | **Stop.** Serials are unique per item, so the same string may legitimately exist on two items — this is the operator holding the wrong product |
+| `ERR_WMS_SERIAL_COUNT_MISMATCH` / `SERIAL_COUNT_MISMATCH` | Serials scanned **!= line quantity** | **Stop at the handheld** — the client must not allow submission; the server validates as a backstop |
+
+**Offline nuance (D-34 wave-scoped cache).** With a wave-scoped serial cache the handheld **cannot
+distinguish "unknown serial" from "valid serial not in this wave."** **Offline, the message is *"not
+expected in this wave"*** — the handheld must **not assert `SERIAL_UNKNOWN` offline.** Definitive
+classification (unknown vs elsewhere) happens at **ingest**, where the full serial state is available.
+
+## 3.14 Site — **new (D-30); a custom LIST field on Location (sponsor ruling, not a record)**
 
 A **site** is a physical building; a **NetSuite location belongs to exactly one site** (a site may hold
 several); a **bin belongs to one location and therefore one site.** All three bindings are **immutable**.
 
-**Representation choice:** a **field on the Location** (`custrecord_loc_site` → a small
-`customrecord_wms_site` list record), **not** a field on every bin. Rationale: the location→site binding
-is the single source; the bin already carries its location (immutable, D-14), so the bin's site is derived
-through the location and never stored twice — avoiding a second denormalised binding that could drift.
-The site record is a thin list (code, name). *Worked example (D-30):* Location A (good, ~1,000 bins) and
-Location B (RQD, ~3 bins) are **different NetSuite locations under one site.** The operator picker selects
-the **site**; cache warm covers **all locations at that site** (Part E), so Location B is reachable.
+**Representation (sponsor ruling 2026-08-11): a custom LIST field on the Location** — `custrecord_loc_site`
+backed by a **NetSuite custom list (`customlist_wms_site`), NOT a custom record.** **Locations sharing a
+value are the same building.** It is **not** stored on the bin — the bin carries its location (immutable,
+D-14), so its site derives through the location and is never stored twice.
+
+> **Validation note (the cost of a hand-maintained list).** A custom list is hand-maintained, so **a typo
+> creates a phantom site.** Bin and location setup must **validate the site against the existing list
+> values, not accept free-text** — otherwise "WH-1" and "WH1" become two buildings and the picker/cache-warm
+> grouping silently fractures.
+
+*Worked example (D-30):* Location A (good, ~1,000 bins) and Location B (RQD, ~3 bins) carry the **same
+`custrecord_loc_site` value** — one building, two NetSuite locations. The operator picker selects the
+**site**; cache warm covers **all locations sharing that site value** (Part E), so Location B is reachable.
 
 ## 3.15 Location class — **new (D-30/D-33; confirmed required, no longer conditional)**
 

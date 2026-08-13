@@ -105,6 +105,13 @@ numbering differs from this file. The mapping actually used: "six record types" 
 receipt" = **PF-33** (not PF-21); "line location shapes" = **PF-34** (not PF-19). PF-16/17/18/22/23 already
 matched.*
 
+## Deployment (from the developer — both deployment-critical)
+
+| # | Fact | Status | Depends on it |
+|---|---|---|---|
+| **PF-35** | The Suitelet **deployment's Audience subtab must include the `Online Form User` role.** Omit it on a **Released** deployment and NetSuite **blocks the request before the script runs** — *"You do not have privileges to view this page"* — which **reads as a script failure but is a deployment-config error.** | CONFIRMED (developer) | T-0.5 / T-3.1 deployment checklist, T-0.8 (T1) |
+| **PF-36** | **`Administrator` cannot be selected as the `Execute As Role`** on a Suitelet. A dedicated **least-privilege role is mandatory, not merely preferred** — this **reinforces AD-19** (it does not complicate it). | CONFIRMED (developer) | AD-19, T-3.3, deployment checklist |
+
 ---
 
 ## Live design (was "deferred" under D-08 — now in scope under D-29)

@@ -845,8 +845,13 @@ the RQD warehouse with ~3 bins; both are under one roof, one site, but the syste
 - **The `<LOCATIONCODE>-<BINCODE>` naming prefix stays the LOCATION code** — that is what guarantees bin
   uniqueness and what NetSuite postings reference. The prefix is not re-based on the site.
 
-**Affects:** schema (site record/field, Part C), the handheld picker + cache warm (Part E), D-14 bin
-naming, the location class (below).
+**Representation (sponsor ruling 2026-08-11):** site is a **custom LIST field on Location**
+(`custrecord_loc_site` backed by `customlist_wms_site`), **not a custom record.** Locations sharing a
+value are the same building. Because the list is hand-maintained, bin/location setup **validates the site
+against the existing list values, not free-text** — a typo would otherwise mint a phantom site (§3.14).
+
+**Affects:** schema (site as a list field on Location, §3.14), the handheld picker + cache warm (Part E),
+D-14 bin naming, the location class (below).
 
 ## D-31 — Movement rules by scope · *accepted 2026-08-11; EXTENDS D-28*
 
@@ -898,6 +903,27 @@ does not).
 
 **Affects:** the location-class schema (Part C), the Q-29/Q-36 knot in D-14 (the class is no longer
 *conditional* on both landing), wave/replen/putaway scoping, availability.
+
+## D-34 — Serial share is a parameter with a design envelope, not a measured value · *accepted 2026-08-11 (sponsor)*
+
+**Ruling:** every account differs and **serial may be a material share.** The design **must function
+correctly at up to 100% serialised.** Serial share is therefore a **parameter with a design envelope**,
+not a number the build waits on. **T-0.1's census becomes an input that TUNES configuration, not a gate on
+the design** (this changes the character of Q-21 — resolved, not open).
+
+**Parameterised (invariant #9 — all from `customrecord_wms_config`):** the **wave-scoped serial cache
+size**; the **scan-volume model in T-0.2**; the **handheld multi-scan flow** (how many serials one screen
+collects); the **ingest batch size**.
+
+**Design consequence (recorded):** a line for **N serialised units is ONE event carrying N serials**, not
+N events — **one record, one bin-state update, one governance charge.** Size the payload against the
+**10 MB Map/Reduce value limit (PF-10)** and the **3,000-character group-key bound (PF-10 / T-2.6a)** —
+at 100% serial and large N the serial array is the payload's dominant term, so the batch size must be
+bounded by *value size*, not only governance units.
+
+**Affects:** Q-21 (resolved), T-0.1 (census tunes config), T-0.2 (scan-volume model + 100% envelope),
+T-3.2 (serial cache size a config value), T-2.6a (group-key bound), F-29 (batch size bounded by value
+size too), invariant #9.
 
 ---
 

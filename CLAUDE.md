@@ -30,7 +30,8 @@ silent scope reduction as a defect, not an optimisation.
 version.*
 *Further revised 2026-08-11 per the serial reissue (D-29…D-33): **#4** now per (order, location); **#13**
 gains two posting exceptions; **#14** admits SERIAL; **#19** adds the serial-never-negative rule; **#21**
-and **#22** are new (serial in one bin; bin qty = serial-row count). Serial is IN scope (D-08 superseded).*
+and **#22** are new (serial in one bin; bin qty = serial-row count). Serial is IN scope (D-08 superseded).
+**#23** is new (replenishment never sources from a holding location — hard guard, location-class pass).*
 
 1. **`customrecord_wms_bin_state` is the operational truth of a bin, not `inventorybalance`.** The
    ledger lags by the event queue **by a measured window** (established in T-12.1, not an assumed
@@ -129,6 +130,13 @@ and **#22** are new (serial in one bin; bin qty = serial-row count). Serial is I
     `custrecord_wms_serial_state` is the per-unit truth; `customrecord_wms_bin_state` is the scalar
     quantity. Reconciliation (T-8.3) checks the two agree for serialised items and raises on divergence.
     (D-29, PF-31)
+23. **Replenishment must NEVER source from a holding location — a hard guard, not a preference.** A
+    HOLDING location (RQD) holds stock that is not fit to sell; sourcing a replenishment from it physically
+    ships defective goods to a customer. Every replenishment candidate is filtered on
+    `custrecord_loc_class === OPERATIONAL` before it can be selected, and a task that would source from a
+    holding location is refused outright, not merely de-prioritised. The location class also excludes
+    holding locations from the picker default, the default wave sweep and putaway targeting — but *those*
+    are defaults a named order/target can override; **this one is absolute.** (D-30, D-33)
 
 ## Conventions
 
