@@ -11,8 +11,8 @@
  * Standard mode works, including on a transformed record - dynamic mode is not
  * required (PF-16). No bin fields ever touch the ledger (invariant #13).
  *
- * Slice scope: one PO, one line. Days 6/7 exercise LOT/SERIAL; the shaping is
- * already mode-aware here, so those days add data, not code paths.
+ * Each line carries its OWN tracking mode (invariant #14 - mixed-mode orders are
+ * normal); the adapter shapes every line by its own mode, never a group default.
  */
 define(['N/record', './wms_lib_inventory_detail'], function (record, detail) {
     'use strict';
@@ -23,27 +23,50 @@ define(['N/record', './wms_lib_inventory_detail'], function (record, detail) {
         return err;
     }
 
+    function applyDetail(receipt, lineIndex, line) {
+        // Inventory detail shaped by the pure module, by THIS line's mode (empty for PLAIN).
+        var assignments = detail.buildInventoryAssignments(
+            { mode: line.mode, quantity: line.quantity, lot: line.lot, serials: line.serials },
+            detail.DIRECTIONS.RECEIPT
+        );
+        if (assignments.length === 0) { return; }
+        var invDetail = receipt.getSublistSubrecord({
+            sublistId: 'item',
+            fieldId: 'inventorydetail',
+            line: lineIndex,
+        });
+        assignments.forEach(function (assignment, k) {
+            invDetail.insertLine({ sublistId: 'inventoryassignment', line: k });
+            Object.keys(assignment).forEach(function (fieldId) {
+                invDetail.setSublistValue({
+                    sublistId: 'inventoryassignment',
+                    fieldId: fieldId,
+                    line: k,
+                    value: assignment[fieldId],
+                });
+            });
+        });
+    }
+
     /**
-     * Post an Item Receipt for one PO line.
+     * Post one Item Receipt for a PO, receiving one or more lines - each shaped by
+     * its OWN tracking mode (invariant #14).
      *
      * @param {Object} params
      * @param {string|number} params.purchaseOrderId  internal id of the PO
-     * @param {Object} params.line
-     * @param {string} params.line.mode      PLAIN | LOT | SERIAL
-     * @param {string|number} params.line.item  item internal id (to match the PO line)
-     * @param {number} params.line.quantity
-     * @param {string} [params.line.lot]
-     * @param {string[]} [params.line.serials]
+     * @param {Object[]} params.lines  each { item, quantity, mode, lot?, serials? }
      * @returns {{itemReceiptId: string}}
      */
     function postPurchaseOrderReceipt(params) {
         if (!params || params.purchaseOrderId === undefined || params.purchaseOrderId === null) {
             throw wmsError('ERR_WMS_INVALID_ARGUMENT', 'purchaseOrderId is required');
         }
-        var line = params.line;
-        if (!line || typeof line !== 'object') {
-            throw wmsError('ERR_WMS_INVALID_ARGUMENT', 'line is required');
+        var lines = params.lines;
+        if (!Array.isArray(lines) || lines.length === 0) {
+            throw wmsError('ERR_WMS_INVALID_ARGUMENT', 'at least one line is required');
         }
+        var byItem = {};
+        lines.forEach(function (line) { byItem[String(line.item)] = line; });
 
         // Standard mode; isDynamic not required (PF-16).
         var receipt = record.transform({
@@ -53,64 +76,28 @@ define(['N/record', './wms_lib_inventory_detail'], function (record, detail) {
             isDynamic: false,
         });
 
-        // Match the PO line by item; unmatched lines are not received (AD-07 spirit).
+        var matched = {};
         var lineCount = receipt.getLineCount({ sublistId: 'item' });
-        var targetIndex = -1;
         for (var i = 0; i < lineCount; i += 1) {
-            var itemId = receipt.getSublistValue({ sublistId: 'item', fieldId: 'item', line: i });
-            if (String(itemId) === String(line.item)) {
-                targetIndex = i;
-                break;
+            var itemId = String(receipt.getSublistValue({ sublistId: 'item', fieldId: 'item', line: i }));
+            var cfg = byItem[itemId];
+            if (cfg && !matched[itemId]) {
+                matched[itemId] = true;
+                receipt.setSublistValue({ sublistId: 'item', fieldId: 'itemreceive', line: i, value: true });
+                receipt.setSublistValue({ sublistId: 'item', fieldId: 'quantity', line: i, value: cfg.quantity });
+                applyDetail(receipt, i, cfg);
+            } else {
+                // Unmatched (and duplicate) PO lines are not received (invariant #6).
+                receipt.setSublistValue({ sublistId: 'item', fieldId: 'itemreceive', line: i, value: false });
             }
         }
-        if (targetIndex === -1) {
-            throw wmsError('ERR_WMS_PO_LINE_MISMATCH', 'no PO line for item ' + line.item);
-        }
 
-        // Receive only the target line; everything else itemreceive = false (invariant #6).
-        for (var j = 0; j < lineCount; j += 1) {
-            receipt.setSublistValue({
-                sublistId: 'item',
-                fieldId: 'itemreceive',
-                line: j,
-                value: j === targetIndex,
-            });
-        }
-        receipt.setSublistValue({
-            sublistId: 'item',
-            fieldId: 'quantity',
-            line: targetIndex,
-            value: line.quantity,
+        // Every requested line must have found a PO line.
+        Object.keys(byItem).forEach(function (itemId) {
+            if (!matched[itemId]) {
+                throw wmsError('ERR_WMS_PO_LINE_MISMATCH', 'no PO line for item ' + itemId);
+            }
         });
-
-        // Inventory detail, shaped by the pure module (empty for PLAIN).
-        var assignments = detail.buildInventoryAssignments(
-            {
-                mode: line.mode,
-                quantity: line.quantity,
-                lot: line.lot,
-                serials: line.serials,
-            },
-            detail.DIRECTIONS.RECEIPT
-        );
-        if (assignments.length > 0) {
-            var invDetail = receipt.getSublistSubrecord({
-                sublistId: 'item',
-                fieldId: 'inventorydetail',
-                line: targetIndex,
-            });
-            assignments.forEach(function (assignment, k) {
-                invDetail.insertLine({ sublistId: 'inventoryassignment', line: k });
-                Object.keys(assignment).forEach(function (fieldId) {
-                    invDetail.setSublistValue({
-                        sublistId: 'inventoryassignment',
-                        fieldId: fieldId,
-                        line: k,
-                        value: assignment[fieldId],
-                    });
-                });
-            });
-        }
 
         var itemReceiptId = receipt.save();
         return { itemReceiptId: String(itemReceiptId) };

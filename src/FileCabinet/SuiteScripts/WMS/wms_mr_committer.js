@@ -24,7 +24,8 @@ define([
     'N/log',
     './lib/wms_lib_ledger_adapter',
     './lib/wms_lib_item_mode',
-], function (search, record, runtime, log, ledger, itemMode) {
+    './lib/wms_lib_receipt',
+], function (search, record, runtime, log, ledger, itemMode, receiptLib) {
     'use strict';
 
     var EVENT_RECORD = 'customrecord_wms_scan_event';
@@ -65,21 +66,18 @@ define([
     }
 
     function reduce(context) {
+        // One reduce = one source document (PO). Each event is a received line;
+        // mode is resolved PER LINE (invariant #14), never from the group. The
+        // per-item cache in resolveItemMode makes repeat items on the PO free.
         var events = context.values.map(function (v) { return JSON.parse(v); });
-        // Slice: one PO, one line. Post from the first event; the source document is
-        // the reduce key. Governance guard before the transform (invariant: check
-        // remaining usage before a transform in a loop).
-        var first = events[0];
         if (runtime.getCurrentScript().getRemainingUsage() < 100) {
-            // Not enough budget this invocation - leave PENDING for the next cycle.
+            // Governance guard: not enough budget this invocation - leave PENDING.
             return;
         }
         try {
-            var posted = ledger.postPurchaseOrderReceipt({
-                purchaseOrderId: context.key,
-                line: { mode: itemMode.resolveItemMode(first.item), item: first.item, quantity: first.quantity },
-            });
-            events.forEach(function (e) { setStatus(e.eventId, 'POSTED'); });
+            var lines = receiptLib.buildReceiptLines(events, itemMode.resolveItemMode);
+            var posted = ledger.postPurchaseOrderReceipt({ purchaseOrderId: context.key, lines: lines });
+            lines.forEach(function (l) { setStatus(l.eventId, 'POSTED'); });
             log.audit({ title: 'receipt posted', details: 'PO ' + context.key + ' -> IR ' + posted.itemReceiptId });
         } catch (e) {
             events.forEach(function (ev) {
