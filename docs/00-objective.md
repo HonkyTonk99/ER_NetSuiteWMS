@@ -102,7 +102,8 @@ nice-to-have** (Phase 8).
 - **Inbound is in scope** (D-09): PO, Transfer Order and Work Order receipt plus directed putaway,
   all through the WMS. Phase 5B.
 - **Scope widened 2026-11-23 (WMS GO benchmark, D-35…D-41)** — all design-in, still gated by T-0.3: Work
-  Order **component issue** incl. WIP/routing (D-35), **kit/package items** (D-36), an operator **blind
+  Order **component issue** incl. WIP/routing — pick-to-shop-floor via Inventory Transfer, then Work Order
+  Issue at build start (D-35, D-43), **kit/package items** (D-36), an operator **blind
   cycle-count + variance-approval** workflow distinct from reconciliation (D-37), a configurable
   **label/document designer + printing** subsystem (D-38), and a first-class **management/desk "Hub" tier**
   (D-39).

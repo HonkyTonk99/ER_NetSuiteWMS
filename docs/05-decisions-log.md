@@ -930,7 +930,8 @@ size too), invariant #9.
 *The block below (D-35…D-42) was recorded 2026-11-23 after a build-vs-buy comparison against the **WMS GO**
 product (Catalyst IT Solutions). The comparison surfaced six functional gaps — **D-35…D-41, all scope
 WIDENINGS, design-in, still gated by T-0.3; none narrows scope, so none is a flagged conflict** — plus a
-design-stance ruling, **D-42**, recording why the two architectures differ on purpose.*
+design-stance ruling, **D-42**, recording why the two architectures differ on purpose. **D-43** (same day)
+refines D-35 with the shop-floor work-order component flow.*
 
 ## D-35 — Work Order component issue + WIP/routing is IN scope · *accepted 2026-11-23 (sponsor)*
 
@@ -1069,6 +1070,56 @@ grounds.**
 
 **Affects:** affirms D-07 and invariants #1/#13/#14; frames the WMS GO comparison; no scope or build change by
 itself.
+
+## D-43 — Work Order component flow: a segregated shop-floor location, pick-to-floor then issue-at-build · *accepted 2026-11-23 (sponsor); refines D-35*
+
+**Ruling (verbatim):** "If Work orders are switched on, and if WIP is enabled, then moving inventory from
+warehouse to the production floor is important and it needs to be efficient. The way I'd like to manage this
+is for inventory to be moved into a segregated shop floor NetSuite location, different from warehouse
+locations. The issue and build happens from that shop floor location. So, when inventory issue issued is can
+be 'picked for a work order' (this means moved into the shop floor location) but not yet issued to the work
+order. And issued to the work order means processing a work order issue transaction, this will consume the
+inventory and so we only want to do that when we actually start the build process. By moving inventory to the
+shop floor we immediately remove it from the warehouse available stock."
+
+**The model — two distinct states, two distinct ledger events:**
+
+1. **Picked for a work order.** The WMS directs a component pick from warehouse bins and moves the stock into
+   a **segregated shop-floor NetSuite location** (distinct from warehouse locations). At the boundary this is
+   an **Inventory Transfer** (warehouse location → shop-floor location; same-site, **reusing D-31**), **not**
+   a Work Order Issue. The stock is **removed from warehouse available stock immediately** (it now lives in
+   the shop-floor location) but is **not yet consumed** — it is earmarked on the floor, awaiting the build.
+2. **Issued to the work order.** At **build start**, a **Work Order Issue** transaction (the D-35
+   production-*input* shape) **consumes** the components **from the shop-floor location** into WIP. Done only
+   when the build actually begins, so inventory is never consumed prematurely.
+
+The build itself (WO Completion / Assembly Build, Q-25) also runs from the shop-floor location.
+
+**Consequences:**
+- **New location class — PRODUCTION (shop-floor)**, extending D-30's OPERATIONAL/HOLDING (`custrecord_loc_class`,
+  §3.15). A shop-floor location is **excluded from customer pick, wave sweep, replenishment sourcing and
+  putaway defaults** (stock there is earmarked for production) but **is** the source/target of the WO flow.
+  It differs from HOLDING in kind — shop-floor stock is **fit**, just committed to production. Invariant #23's
+  `=== OPERATIONAL` allow-list already excludes it.
+- **Reuses the existing pick/wave engine** (same engine, not a fork — cf. D-22 TOs): WO component picking is a
+  directed bin pick whose ledger posting is an **Inventory Transfer**, not an Item Fulfilment.
+- **No new ledger shape** beyond D-35's WO Issue: "picked for WO" is the existing Inventory Transfer (06 §4);
+  "issued to WO" is the WO Issue row. Count stays **seven**.
+- **WMS state** tracks **"picked-for-WO (on the floor, not issued)"** distinct from **"issued"** — a
+  component-pick / WO-staging status.
+- **Sequencing** (invariant #18): both the Inventory Transfer and the WO Issue are consumption/outbound-phase
+  events; a WO Issue NetSuite cannot satisfy **defers, never fails**.
+- **Inherits F-26 / Q-29:** NetSuite may still count shop-floor stock as company-wide available unless the SO
+  is location-specific — the same over-commit consideration as holding locations, handled the same way (the
+  separate location, not a status).
+
+**Open (tracked, not assumed):** one shop-floor location per site or several; whether one WO draws from
+exactly one shop-floor location; the exact `custrecord_loc_class` value name — **Q-61**. The WO Issue
+transform/field shape (incl. its location field) is still the pending A-series platform question from D-35.
+
+**Affects:** D-35 (refined), D-31 (Inventory Transfer now also carries WO component picking), D-30/§3.15
+(location class gains PRODUCTION), invariant #18 (WO Issue sequencing), invariant #23 (class now tri-valued),
+Q-55 (refined), Q-61 (new), 06 §4 (WO flow note), 00 §4 (scope), a WO-flow task set (Phase 5B / manufacturing).
 
 ---
 

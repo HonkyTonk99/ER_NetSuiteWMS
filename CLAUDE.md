@@ -32,14 +32,15 @@ version.*
 gains two posting exceptions; **#14** admits SERIAL; **#19** adds the serial-never-negative rule; **#21**
 and **#22** are new (serial in one bin; bin qty = serial-row count). Serial is IN scope (D-08 superseded).
 **#23** is new (replenishment never sources from a holding location — hard guard, location-class pass).*
-*Further revised 2026-11-23 per the WMS GO benchmark rulings (D-35…D-42): **#24** is new (WMS identity from
+*Further revised 2026-11-23 per the WMS GO benchmark rulings (D-35…D-43): **#24** is new (WMS identity from
 the NetSuite employee record; role and access governed in the WMS app). Scope widened — WO component issue +
 WIP/routing (D-35), kit/package items (D-36), operator blind cycle count + variance approval (D-37),
 label/document designer + printing (D-38) and a first-class management/desk "Hub" tier (D-39) are now IN
 scope; QC stays the HOLDING-class model with NO advanced inventory assumed (D-41, affirms D-07). These are
 design-in additions, still gated by T-0.3 — not build-now. **D-42** records that the WMS-owned bin/lot/serial
 model is a deliberate choice — native NetSuite handling is judged subpar — not a workaround, WMS GO otherwise
-a functional peer.*
+a functional peer. **D-43** adds the work-order component flow: pick-to-shop-floor (Inventory Transfer) then
+Work Order Issue at build start, into a segregated PRODUCTION-class location.*
 
 1. **`customrecord_wms_bin_state` is the operational truth of a bin, not `inventorybalance`.** The
    ledger lags by the event queue **by a measured window** (established in T-12.1, not an assumed
@@ -144,7 +145,9 @@ a functional peer.*
     `custrecord_loc_class === OPERATIONAL` before it can be selected, and a task that would source from a
     holding location is refused outright, not merely de-prioritised. The location class also excludes
     holding locations from the picker default, the default wave sweep and putaway targeting — but *those*
-    are defaults a named order/target can override; **this one is absolute.** (D-30, D-33)
+    are defaults a named order/target can override; **this one is absolute.** The class is **tri-valued since
+    D-43 — OPERATIONAL / HOLDING / PRODUCTION (shop-floor)** — and the `=== OPERATIONAL` allow-list filter
+    excludes both HOLDING and PRODUCTION. (D-30, D-33, D-43)
 24. **A WMS user is an identity backed by a NetSuite employee record; role and access are assigned and
     enforced in the WMS app's own configuration, never inherited from a NetSuite permission role.** Every
     operator and manager links to an `employee` — the attribution anchor, so a scan is stamped with a real

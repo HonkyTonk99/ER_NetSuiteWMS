@@ -99,14 +99,24 @@ Issue (D-35; the seventh, shape pending platform confirmation).
 |---|---|---|
 | Out | PICK / PACK (order complete) | **Item Fulfillment** — location, item, qty, + lot detail for LOT items |
 | Out | COUNT variance | **Inventory Adjustment** |
-| Out | Genuine location-to-location move | **Inventory Transfer** — only if multi-location is in scope (Q-08) |
+| Out | Genuine location-to-location move | **Inventory Transfer** — only if multi-location is in scope (Q-08); **also carries "picked for a work order"** (warehouse → shop-floor location, D-43) |
 | In | PO receipt | **Item Receipt** against the PO |
 | In | Transfer Order receipt | **Item Receipt** against the TO |
 | In | Production output | **Work Order Completion / Assembly Build** (Q-25) |
-| Out | Production **input** — components issued onto a Work Order | **Work Order Issue** when WIP+Routing is on; otherwise backflushed on the build (D-35; transform & field shape pending a new A-series platform question). Consumes component stock, so it defers like any outbound when NetSuite lacks the quantity (invariant #18) |
+| Out | Production **input** — components issued onto a Work Order | **Work Order Issue** **from the shop-floor location** (D-43) when WIP+Routing is on; otherwise backflushed on the build (D-35; transform & field shape pending a new A-series platform question). Consumes component stock, so it defers like any outbound when NetSuite lacks the quantity (invariant #18) |
 | — | BIN_TRANSFER / REPLEN_MOVE / PUTAWAY | **Nothing.** Stock has not changed location — no financial event |
 
 **Inbound postings are real financial events** and must reach the ledger, unlike bin movements.
+
+**Work-order component flow (D-43).** Components are **picked for a work order** — a directed bin pick (same
+pick/wave engine, cf. D-22) whose ledger posting is an **Inventory Transfer** from a warehouse location into a
+segregated **shop-floor** NetSuite location (same-site, D-31). This **removes the stock from warehouse
+availability immediately but does not consume it.** Only at **build start** does a **Work Order Issue**
+consume the components from the shop-floor location into WIP. The shop-floor location is a **PRODUCTION-class**
+location (§3.15) — excluded from customer picking/waves/replenishment, the designated source/target of the WO
+flow. NetSuite may still count shop-floor stock as company-wide available (the existing F-26 / Q-29
+over-commit consideration, inherited here). The WMS tracks **"picked-for-WO (on the floor, not issued)"** as a
+state distinct from **"issued."**
 
 > **All shapes CONFIRMED against the platform (D-27, `08-platform-facts.md` PF-16..PF-21).** Inventory
 > detail is the `inventorydetail` subrecord's `inventoryassignment` sublist — `receiptinventorynumber`

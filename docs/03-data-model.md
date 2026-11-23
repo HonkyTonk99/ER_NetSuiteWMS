@@ -405,14 +405,23 @@ D-14), so its site derives through the location and is never stored twice.
 `custrecord_loc_site` value** — one building, two NetSuite locations. The operator picker selects the
 **site**; cache warm covers **all locations sharing that site value** (Part E), so Location B is reachable.
 
-## 3.15 Location class — **new (D-30/D-33; confirmed required, no longer conditional)**
+## 3.15 Location class — **new (D-30/D-33; extended by D-43; confirmed required, no longer conditional)**
 
-Every Location carries a **class: `custrecord_loc_class` = OPERATIONAL | HOLDING.** A **HOLDING** location
-(RQD) is **excluded from:** the operator picker's *default*, wave generation, replenishment sourcing, and
-putaway targeting; and **its stock never counts toward an OPERATIONAL location's availability.** It is
-**NOT barred from fulfilment** — stock can ship from a holding location (a defect giveaway), which
-NetSuite's location-locked transactions handle natively. **PF-32 confirms in-transit inventory creates no
-location record, so RQD is the only driver** — the class is required now, not conditional on Q-36.
+Every Location carries a **class: `custrecord_loc_class` = OPERATIONAL | HOLDING | PRODUCTION (D-43).** A
+**HOLDING** location (RQD) is **excluded from:** the operator picker's *default*, wave generation,
+replenishment sourcing, and putaway targeting; and **its stock never counts toward an OPERATIONAL location's
+availability.** It is **NOT barred from fulfilment** — stock can ship from a holding location (a defect
+giveaway), which NetSuite's location-locked transactions handle natively. **PF-32 confirms in-transit
+inventory creates no location record, so RQD is the only driver** — the class is required now, not
+conditional on Q-36.
+
+A **PRODUCTION** (shop-floor) location (**D-43**) is **likewise excluded** from the operator picker default,
+wave generation, replenishment sourcing and putaway defaults — its stock is **earmarked for a work order,
+not customer orders** — but it **is** the designated source/target of the WO pick→issue→build flow:
+components arrive by **Inventory Transfer** ("picked for a work order"), and a **Work Order Issue** consumes
+them from here at build start (D-35). It differs from HOLDING **in kind**: shop-floor stock is **fit**, just
+committed to production rather than defective. Because the replenishment hard guard (invariant #23) allow-lists
+`custrecord_loc_class === OPERATIONAL`, both HOLDING and PRODUCTION are excluded by the same filter.
 
 ---
 
