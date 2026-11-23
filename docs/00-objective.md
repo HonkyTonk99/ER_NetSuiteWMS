@@ -93,13 +93,27 @@ nice-to-have** (Phase 8).
   enabled; serial/lot numbering is set **per item** on the item record. This is a change from the
   FRD, which silently assumes Advanced Bin / Numbered Inventory Management throughout — see F-19 and
   `06-netsuite-boundary.md`.
-- The ledger interface is **six** transaction shapes — three outbound, three inbound since D-09 put
-  receiving through the WMS. Bin movements post nothing.
+- The ledger interface is **seven** transaction shapes since D-35 — three outbound, three inbound (D-09),
+  plus a production-*input* **Work Order Issue** (component consumption; the seventh, its shape pending
+  platform confirmation). Bin movements post nothing.
 - **Serial, lot and plain items are all in scope** (D-29 — supersedes D-08). Item tracking mode is
   **PLAIN, LOT or SERIAL**, per item (the record type, PF-14). Serialised units carry a per-unit
   lifecycle record (`customrecord_wms_serial_state`).
 - **Inbound is in scope** (D-09): PO, Transfer Order and Work Order receipt plus directed putaway,
   all through the WMS. Phase 5B.
+- **Scope widened 2026-11-23 (WMS GO benchmark, D-35…D-41)** — all design-in, still gated by T-0.3: Work
+  Order **component issue** incl. WIP/routing (D-35), **kit/package items** (D-36), an operator **blind
+  cycle-count + variance-approval** workflow distinct from reconciliation (D-37), a configurable
+  **label/document designer + printing** subsystem (D-38), and a first-class **management/desk "Hub" tier**
+  (D-39).
+- **WMS identity is drawn from the NetSuite employee record; role and access are governed in the WMS app**
+  (D-40, invariant #24) — pickers remain unlicensed (D-19).
+- **No advanced inventory is assumed** (D-41, affirms D-07): Advanced Bin / Numbered Inventory Management and
+  Inventory Status are not required; QC/quarantine is the WMS HOLDING location class (invariant #23) plus
+  non-fulfillable bin types (D-16). The native over-commit of held stock stays F-26 / Q-29.
+- **The structural divergence from WMS GO is deliberate** (D-42): the WMS owns bins/lots/serial because
+  native NetSuite handling is judged subpar — not a workaround. Apart from that axis, WMS GO and
+  ER_NetSuiteWMS are treated as functional peers.
 - **The WMS is operationally primary, but NetSuite retains authority over commitment and cost**
   (D-10, AD-17). The WMS allocates *within* NetSuite's commitment and runs all bin-level allocation
   and replenishment rules. **Costing is entirely NetSuite's** — the WMS supplies quantity, date and

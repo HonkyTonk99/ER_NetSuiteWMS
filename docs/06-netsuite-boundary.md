@@ -58,6 +58,18 @@ NetSuite. By taking bins out of NetSuite entirely, all of that disappears:
 The bin isolation rule (1 SKU / 1 batch per bin) is now **purely a WMS rule**, enforced by the WMS,
 with no platform constraint fighting it. That is a cleaner place for it to live than it was before.
 
+> **D-41 (2026-11-23) affirms this posture for QC.** No advanced inventory is assumed: Advanced Bin /
+> Numbered Inventory Management and the **Inventory Status** feature are not required — and Inventory Status
+> is **foreclosed** anyway, since it has Advanced Bin / Numbered as a documented prerequisite. Quality /
+> quarantine is a WMS construct (the HOLDING **location class**, invariant #23, plus non-fulfillable bin
+> types, D-16), accepted as coarser than native Inventory Status (whole-location, no native decrement of
+> NetSuite Quantity Available) in exchange for the light footprint. The native over-commit of held stock is
+> the existing F-26 / Q-29, handled by a separate holding *location*, not a status.
+>
+> **D-42 (2026-11-23) records why.** This WMS-owned model is a **deliberate choice** — native NetSuite
+> bin/lot/serial handling is judged operationally subpar — **not a workaround for a missing feature.** It is
+> the sponsor's answer to any future "why not just use native bins?"
+
 ## 3. The one remaining axis: item tracking mode
 
 Variability moves from *account-level* to *item-level*, which is how NetSuite actually models it.
@@ -80,7 +92,8 @@ location is **received, picked and shipped** through the serial flows, with its 
 
 ## 4. The complete ledger interface
 
-**Six shapes since D-09 put inbound through the WMS** — three outbound, three inbound.
+**Seven shapes since D-35** — three outbound, three inbound (D-09), plus a production-*input* Work Order
+Issue (D-35; the seventh, shape pending platform confirmation).
 
 | Direction | WMS event | NetSuite posting |
 |---|---|---|
@@ -90,6 +103,7 @@ location is **received, picked and shipped** through the serial flows, with its 
 | In | PO receipt | **Item Receipt** against the PO |
 | In | Transfer Order receipt | **Item Receipt** against the TO |
 | In | Production output | **Work Order Completion / Assembly Build** (Q-25) |
+| Out | Production **input** — components issued onto a Work Order | **Work Order Issue** when WIP+Routing is on; otherwise backflushed on the build (D-35; transform & field shape pending a new A-series platform question). Consumes component stock, so it defers like any outbound when NetSuite lacks the quantity (invariant #18) |
 | — | BIN_TRANSFER / REPLEN_MOVE / PUTAWAY | **Nothing.** Stock has not changed location — no financial event |
 
 **Inbound postings are real financial events** and must reach the ledger, unlike bin movements.

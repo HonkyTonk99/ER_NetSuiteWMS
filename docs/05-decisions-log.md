@@ -927,6 +927,151 @@ size too), invariant #9.
 
 ---
 
+*The block below (D-35…D-42) was recorded 2026-11-23 after a build-vs-buy comparison against the **WMS GO**
+product (Catalyst IT Solutions). The comparison surfaced six functional gaps — **D-35…D-41, all scope
+WIDENINGS, design-in, still gated by T-0.3; none narrows scope, so none is a flagged conflict** — plus a
+design-stance ruling, **D-42**, recording why the two architectures differ on purpose.*
+
+## D-35 — Work Order component issue + WIP/routing is IN scope · *accepted 2026-11-23 (sponsor)*
+
+**Ruling:** "Yes, and the design should hold productivity as central."
+
+Issuing components onto a Work Order is in scope. Where **WIP + Routing** is enabled this is a distinct
+**Work Order Issue** transaction (not a backflush on the Assembly Build / WO Completion); where it is not,
+components backflush on the build. The WMS must handle **both**. Productivity is a first-class design driver
+— directed component picking, minimal taps.
+
+This **extends the ledger interface** (`06-netsuite-boundary.md` §4): production now has an *input* shape
+(WO Issue / component consumption) as well as the existing *output* shape (WO Completion / Assembly Build,
+Q-25). In the two-phase committer cycle (invariant #18) a WO Issue **consumes** component stock, so it
+behaves as an outbound/consumption event — `DEFERRED`, never `FAILED`, when NetSuite lacks the component
+quantity.
+
+**Open:** WIP+Routing is an account/config fact → folds into **Q-25** (manufacturing config); the WO-Issue
+transform/field shape needs a new developer (A-series) platform question before build.
+
+**Affects:** 06 §4 (new production-input ledger row; count 6 → 7), Q-25, Q-55, invariant #18, T-0.1
+(manufacturing census), a new WO-component-issue handler/task (Phase 5B / manufacturing).
+
+## D-36 — Kit / package items are IN scope · *accepted 2026-11-23 (sponsor)*
+
+**Ruling:** "yes."
+
+Kit/package items are designed in: a kit is **picked and shipped as a set** — its component lines are picked
+together and must not ship half-picked. At the NetSuite boundary a kit expands to its components on the
+fulfilment (no new ledger shape — components post through Item Fulfilment); the WMS directs the component
+picks and groups them under the kit so the wave/pick model keeps them together.
+
+**Affects:** the wave/pick/allocation model (Phase 6/7), pick-task grouping (kit-aware), Q-56, scope (00).
+
+## D-37 — Operator blind cycle count + variance approval is IN scope, distinct from reconciliation · *accepted 2026-11-23 (sponsor); resolves Q-46 and Q-57*
+
+**Ruling:** "design into the application."
+
+A directed, **blind** cycle-count workflow is in scope and is **not** the nightly reconciliation backstop
+(T-8.3). The counter counts what is physically there **without seeing the expected figure**; the system
+records the variance (quantity **and** value); a **manager reviews and approves before any Inventory
+Adjustment posts**. This **closes Q-46 in the affirmative** and supersedes the earlier "defer to release 2"
+considered view.
+
+The adjustment posting reuses the existing COUNT-variance → **Inventory Adjustment** ledger shape (06 §4);
+what is new is the **count lifecycle** (launch / fall-due by per-bin interval / count / variance / approve /
+post) and the manager gate. Reconciliation (T-8.3) stays separate — it detects drift, it does not direct a
+recount.
+
+**Affects:** Q-46 (resolved), Q-57, new count-workflow tasks, the Hub count-approval screen (D-39), T-8.3
+(unchanged, kept distinct), scope (00).
+
+## D-38 — Label/document designer + printer integration is IN scope · *accepted 2026-11-23 (sponsor); scopes Q-06*
+
+**Ruling:** "design into the app."
+
+A **configurable label/document engine** is in scope: templates designed once (text, barcodes, images on a
+sized canvas) that become runnable outputs, printed **on demand or automatically on an event** (e.g. on
+receipt), to **PDF / network printer / native thermal (Zebra-style)**, with **print history and reprint**. A
+new label becomes a configuration job, not a code change. **Q-06** (packing-label platform + pack-station
+routing) now supplies facts *to* this engine rather than being answered separately.
+
+**Affects:** Q-06 (folded in), Q-58, a new label/print subsystem + tasks, the Hub (Print Designer + Print
+History screens, D-39), scope (00).
+
+## D-39 — The management/desk ("Hub") tier is a first-class design axis · *accepted 2026-11-23 (sponsor)*
+
+**Ruling:** "yes, design into the application."
+
+The system is explicitly **two tiers**, designed as such from the start: the **floor** (operator,
+scan-driven, offline-first — invariant #11) and the **desk/Hub** (manager, online, inside NetSuite — *plan*
+work, *watch* it, *run* setup). The Hub is **not** a bolt-on. Its surface includes: dashboards that read
+metric snapshots (invariant #10), order/transaction tracking, an **exceptions console** over
+`customrecord_wms_exception` (invariant #8), wave release / assignment / handover, the count-approval gate
+(D-37), the label designer (D-38), and setup (bins, zones, users, roles, printers). The data layer for
+several of these already exists in design (invariants #8, #10) — this ruling adds the **tier itself and its
+UI** as owned scope, and makes "management separate from user" a first-class architectural line.
+
+**Affects:** scope (00), a new Hub phase, invariants #8/#10 (now have a consuming tier), D-37/D-38 surfaces,
+the identity model (D-40), Q-59.
+
+## D-40 — WMS identity is sourced from the NetSuite employee record; role and access are governed in the WMS app · *accepted 2026-11-23 (sponsor)*
+
+**Ruling:** "allow for the user to be defined from the employee record, and the user or manager role
+assigned in the app's configuration. I want to make sure that a user is drawn from the NetSuite employee
+list, with access controlled in the ER NetSuite WMS app."
+
+Every WMS user — operator **or** manager — is an identity **backed by a NetSuite employee record** (the
+attribution anchor; a scan is stamped with a real person). **Role (PICKER / MANAGER / …) and access (which
+sites/locations, which floor screens, which Hub screens) are assigned and enforced in the WMS's own
+configuration**, not inherited from a NetSuite permission role. This **extends D-19, it does not overturn
+it**: pickers still hold **no NetSuite login or licence**; what changes is that the operator/user record now
+explicitly **references an `employee`**, and authorisation is an in-app concern, so access can be granted and
+revoked without touching NetSuite roles. Recorded as **new invariant #24**.
+
+**Affects:** invariant #24 (new), the operator/user data model (`customrecord_wms_operator` gains an
+employee link — a data-model task), D-19 (extended), the Hub access model (D-39), Q-59, scope (00).
+
+## D-41 — QC stays the HOLDING-location-class model; NO advanced inventory is assumed · *accepted 2026-11-23 (sponsor); resolves Q-60*
+
+**Ruling:** "agree, we're assuming NO advanced inventory is needed."
+
+The light NetSuite footprint of D-07 is **confirmed for QC**: **Advanced Bin / Numbered Inventory Management
+and the Inventory Status feature are NOT assumed or required.** Inventory Status is in any case **foreclosed**
+— it has Advanced Bin / Numbered Inventory Management as a documented prerequisite, which D-07 prohibits.
+Quality/quarantine is therefore a **WMS construct**: the **HOLDING location class** (invariant #23) plus the
+non-fulfillable bin types (D-16). This is accepted as **coarser** than native Inventory Status (whole-location
+rather than per-inventory-detail-line, and it does not natively decrement NetSuite's Quantity Available) in
+exchange for not lighting up the bin/numbered feature family.
+
+**Noted consequence (not a new question — already tracked):** because held stock is **not** made unavailable
+natively, NetSuite can still over-commit it — this is exactly **F-26 / Q-29**, handled by the separate
+holding *location* (an Inventory Transfer across the boundary), never by a status.
+
+**Affects:** affirms D-07; invariants #13/#23; D-16; Q-60 (resolved); cross-ref F-26/Q-29; the required
+NetSuite feature set in 00 §4 (Multi-Location Inventory + per-item lot/serial only).
+
+## D-42 — The WMS owns the bin/lot/serial operational model BY CHOICE; native NetSuite handling is judged subpar · *accepted 2026-11-23 (sponsor)*
+
+**Ruling:** "The core design of WMS GO and ER WMS is a structural configuration issue, and I want it to be
+that way, because I think NetSuite native Bins/lots/serialised features are genuinely subpar. WMS GO assumes
+them to be the base standard. Except for this architectural consideration I see them as essentially equal
+peers."
+
+This records the **intent behind D-07**, so it is not re-litigated. The WMS owning bins, lot placement and
+per-unit serial state (`customrecord_wms_bin_state`, `customrecord_wms_serial_state`) is a **deliberate
+architectural choice**, made because native NetSuite Bin Management / Numbered Inventory is considered
+operationally subpar — **not a workaround for a missing licence or feature.** WMS GO takes the opposite base
+assumption (native bins/lots/serial as the standard).
+
+**Posture toward the comparator:** apart from this one axis, WMS GO and ER_NetSuiteWMS are regarded as
+**essentially functional peers.** The build-vs-buy question therefore turns on the *architecture* —
+WMS-owned vs native-feature-based, plus ER's offline-first and event-sourced correctness — not on a
+feature-count deficit. The six additions D-35…D-41 bring the functional surface toward parity on that
+understanding. A future "why not just use native bins like WMS GO?" is answered here: **by choice, on quality
+grounds.**
+
+**Affects:** affirms D-07 and invariants #1/#13/#14; frames the WMS GO comparison; no scope or build change by
+itself.
+
+---
+
 ## Superseded
 
 | Item | Status |
