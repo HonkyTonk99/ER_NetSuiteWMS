@@ -114,9 +114,12 @@ segregated **shop-floor** NetSuite location (same-site, D-31). This **removes th
 availability immediately but does not consume it.** Only at **build start** does a **Work Order Issue**
 consume the components from the shop-floor location into WIP. The shop-floor location is a **PRODUCTION-class**
 location (§3.15) — excluded from customer picking/waves/replenishment, the designated source/target of the WO
-flow. NetSuite may still count shop-floor stock as company-wide available (the existing F-26 / Q-29
-over-commit consideration, inherited here). The WMS tracks **"picked-for-WO (on the floor, not issued)"** as a
-state distinct from **"issued."**
+flow. A business may run **many** shop-floor locations (D-44); a WO builds at **one** — its location — which
+the "picked for WO" transfer targets. **No SO over-commit arises:** a Sales Order commits stock only at the SO
+line's location (D-44), so a PRODUCTION location is **out of SO reach**, while the location-specific Work /
+Transfer Orders *can* commit it — the Q-29 opt-(a) separate-location mechanism working as designed, not the
+residual risk D-43 first supposed. The WMS tracks **"picked-for-WO (on the floor, not issued)"** as a state
+distinct from **"issued."**
 
 > **All shapes CONFIRMED against the platform (D-27, `08-platform-facts.md` PF-16..PF-21).** Inventory
 > detail is the `inventorydetail` subrecord's `inventoryassignment` sublist — `receiptinventorynumber`

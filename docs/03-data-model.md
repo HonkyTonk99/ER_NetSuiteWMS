@@ -421,7 +421,11 @@ not customer orders** — but it **is** the designated source/target of the WO p
 components arrive by **Inventory Transfer** ("picked for a work order"), and a **Work Order Issue** consumes
 them from here at build start (D-35). It differs from HOLDING **in kind**: shop-floor stock is **fit**, just
 committed to production rather than defective. Because the replenishment hard guard (invariant #23) allow-lists
-`custrecord_loc_class === OPERATIONAL`, both HOLDING and PRODUCTION are excluded by the same filter.
+`custrecord_loc_class === OPERATIONAL`, both HOLDING and PRODUCTION are excluded by the same filter. Several
+PRODUCTION locations may exist (**D-44**); a Work Order builds at **one** (its location), which the
+"picked-for-WO" Inventory Transfer targets. Because **sales-order commitment is location-specific**, PRODUCTION
+stock is **out of sales-order reach** (never committed to an SO) but **committable to the location-specific
+Work & Transfer Orders** — the separate-location mechanism (Q-29 opt-a) working as designed.
 
 ---
 

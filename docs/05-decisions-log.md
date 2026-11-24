@@ -927,11 +927,12 @@ size too), invariant #9.
 
 ---
 
-*The block below (D-35…D-42) was recorded 2026-11-23 after a build-vs-buy comparison against the **WMS GO**
+*The block below (D-35…D-44) was recorded 2026-11-23/24 after a build-vs-buy comparison against the **WMS GO**
 product (Catalyst IT Solutions). The comparison surfaced six functional gaps — **D-35…D-41, all scope
 WIDENINGS, design-in, still gated by T-0.3; none narrows scope, so none is a flagged conflict** — plus a
 design-stance ruling, **D-42**, recording why the two architectures differ on purpose. **D-43** (same day)
-refines D-35 with the shop-floor work-order component flow.*
+refines D-35 with the shop-floor work-order component flow; **D-44** (2026-11-24) adds many shop-floor
+locations and the location-specific-commitment clarification.*
 
 ## D-35 — Work Order component issue + WIP/routing is IN scope · *accepted 2026-11-23 (sponsor)*
 
@@ -1121,6 +1122,36 @@ transform/field shape (incl. its location field) is still the pending A-series p
 (location class gains PRODUCTION), invariant #18 (WO Issue sequencing), invariant #23 (class now tri-valued),
 Q-55 (refined), Q-61 (new), 06 §4 (WO flow note), 00 §4 (scope), a WO-flow task set (Phase 5B / manufacturing).
 
+## D-44 — Many shop-floor locations; location-specific SO commitment keeps production stock out of sales-order reach · *accepted 2026-11-24 (sponsor); refines D-43, resolves Q-61*
+
+**Ruling (verbatim):** "I think its reasonable to assume that a manufacturing business could have many shop
+floor locations. Sales Orders are location specific, so unless the sales order is in the production location
+it will not be committed to the sales order, but it will be committed to work & transfer orders (location
+specific)."
+
+**1 — Many shop-floor locations.** A manufacturing business may run **several PRODUCTION (shop-floor)
+locations**, not one (**resolves Q-61** in favour of *many*). A NetSuite **Work Order is location-specific** —
+it builds at a single location — so a given WO sources and builds at **exactly one** production location (its
+build location), and the "picked for a work order" Inventory Transfer (D-43) targets **that** location. The
+WMS targets the WO's own production location; it does not pool shop floors.
+
+**2 — Commitment is location-specific, and that is the protection.** A Sales Order line commits stock **only
+at the SO line's location.** Stock in a PRODUCTION location is therefore **never committed to a sales order**
+(an SO is never placed in a production location). It **is** committable to **Work Orders and Transfer Orders**,
+which are themselves location-specific — the intent exactly: once components are transferred to the production
+location they become committable to the WO built there, and the Work Order Issue consumes them at build start.
+
+**Corrects a caveat in D-43.** D-43 said the WO flow "inherits F-26 / Q-29" (NetSuite counting shop-floor
+stock as company-wide available and over-committing it to SOs). **That caveat does not hold for a separate
+PRODUCTION location:** location-specific SO commitment means the stock is **out of SO reach** the moment it
+leaves the warehouse location — which is the **Q-29 opt-(a) mechanism (a separate location) working as
+designed**, not a residual risk. (The F-26/Q-29 analysis for in-location non-fulfillable *bins* is untouched;
+this is specifically the separate-location case.)
+
+**Affects:** D-43 (F-26/Q-29 caveat corrected — see Superseded), Q-61 (resolved), §3.15 (PRODUCTION paragraph
+gains "many locations" + commitment note), invariant #15 (commitment stays NetSuite's; WO/TO commitment is
+location-specific), the WO-flow task set (one WO ↔ its build location).
+
 ---
 
 ## Superseded
@@ -1156,3 +1187,4 @@ Q-55 (refined), Q-61 (new), 06 §4 (WO flow note), 00 §4 (scope), a WO-flow tas
 | **Q-10 (reserved stock occupies a bin?)** | **Closed 2026-08-09 — moot** — WMS tracks physical quantity only (no D-number: a scoping clarification, not a design ruling) |
 | **T-0.4 (audit inventorybalance by bin)** | **Superseded by D-17** — bin data migrates from a third-party app (case b) |
 | **T-0.6 / the whole lock subsystem** | **Superseded by D-12** — see AD-04, AD-05 rows |
+| **D-43 "inherits F-26/Q-29 over-commit" caveat** | **Corrected by D-44** — SO commitment is location-specific, so a separate PRODUCTION location sees no SO over-commit; it is the Q-29 opt-(a) mechanism working, not a residual risk |
