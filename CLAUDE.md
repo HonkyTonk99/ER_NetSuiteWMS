@@ -32,7 +32,7 @@ version.*
 gains two posting exceptions; **#14** admits SERIAL; **#19** adds the serial-never-negative rule; **#21**
 and **#22** are new (serial in one bin; bin qty = serial-row count). Serial is IN scope (D-08 superseded).
 **#23** is new (replenishment never sources from a holding location — hard guard, location-class pass).*
-*Further revised 2026-11-23/24 per the WMS GO benchmark rulings (D-35…D-44): **#24** is new (WMS identity from
+*Further revised 2026-11-23/24 per the WMS GO benchmark rulings (D-35…D-45): **#24** is new (WMS identity from
 the NetSuite employee record; role and access governed in the WMS app). Scope widened — WO component issue +
 WIP/routing (D-35), kit/package items (D-36), operator blind cycle count + variance approval (D-37),
 label/document designer + printing (D-38) and a first-class management/desk "Hub" tier (D-39) are now IN
@@ -42,7 +42,9 @@ model is a deliberate choice — native NetSuite handling is judged subpar — n
 a functional peer. **D-43** adds the work-order component flow: pick-to-shop-floor (Inventory Transfer) then
 Work Order Issue at build start, into a segregated PRODUCTION-class location. **D-44** supports **many**
 shop-floor locations (a WO builds at one) and records that location-specific SO commitment keeps production
-stock out of sales-order reach (committable to the location-specific WO/TO instead).*
+stock out of sales-order reach (committable to the location-specific WO/TO instead). **D-45** sets the WO
+component-transfer UI: expose on-hand / committed / available / needed, default the transfer qty to available,
+operator-overridable — the transfer is a location move not gated by invariant #15.*
 
 1. **`customrecord_wms_bin_state` is the operational truth of a bin, not `inventorybalance`.** The
    ledger lags by the event queue **by a measured window** (established in T-12.1, not an assumed
@@ -102,7 +104,9 @@ stock out of sales-order reach (committable to the location-specific WO/TO inste
 15. **Never allocate stock NetSuite has not committed to that order.** Wave eligibility filters on
     committed quantity; picked quantity per line may not exceed it. The WMS refines NetSuite's
     commitment, it does not replace it. Getting this wrong ships one customer's stock to another
-    while the totals still look right. (F-22, AD-17)
+    while the totals still look right. **This governs *sales-order fulfilment* allocation; a Work Order
+    component pick-to-floor is a location move bounded by *availability*, not commitment, and is NOT gated by
+    this rule (D-45).** (F-22, AD-17)
 16. **Post transactions dated by scan time, not commit time.** A pick scanned at 23:58 must not land
     in next month's period because the queue took six minutes. Posting period derives from `trandate`;
     backdating within an *open* period is permitted (PF-24). **This is now a PRE-CHECK, not a caught

@@ -927,12 +927,13 @@ size too), invariant #9.
 
 ---
 
-*The block below (D-35…D-44) was recorded 2026-11-23/24 after a build-vs-buy comparison against the **WMS GO**
+*The block below (D-35…D-45) was recorded 2026-11-23/24 after a build-vs-buy comparison against the **WMS GO**
 product (Catalyst IT Solutions). The comparison surfaced six functional gaps — **D-35…D-41, all scope
 WIDENINGS, design-in, still gated by T-0.3; none narrows scope, so none is a flagged conflict** — plus a
 design-stance ruling, **D-42**, recording why the two architectures differ on purpose. **D-43** (same day)
 refines D-35 with the shop-floor work-order component flow; **D-44** (2026-11-24) adds many shop-floor
-locations and the location-specific-commitment clarification.*
+locations and the location-specific-commitment clarification; **D-45** sets the WO component-transfer UI
+(expose on-hand/committed/available/needed, default the transfer qty to available, user-overridable).*
 
 ## D-35 — Work Order component issue + WIP/routing is IN scope · *accepted 2026-11-23 (sponsor)*
 
@@ -1151,6 +1152,37 @@ this is specifically the separate-location case.)
 **Affects:** D-43 (F-26/Q-29 caveat corrected — see Superseded), Q-61 (resolved), §3.15 (PRODUCTION paragraph
 gains "many locations" + commitment note), invariant #15 (commitment stays NetSuite's; WO/TO commitment is
 location-specific), the WO-flow task set (one WO ↔ its build location).
+
+## D-45 — WO component transfer: expose on-hand / committed / available / needed, default to available, user-overridable · *accepted 2026-11-24 (sponsor); refines D-43/D-44*
+
+**Ruling (verbatim):** "Good point, the inventory transfer will move the inventory regardless if it is
+committed or not. I think we expose on the UI what inventory is on hand, committed, available, and needed on
+the wo. Then default the qty to transfer to be the qty available. The user can override."
+
+**The transfer moves stock regardless of commitment.** "Picked for a work order" (the D-43 Inventory Transfer)
+is a **location move, not a customer allocation** — so it is **NOT gated by invariant #15**, which governs
+**sales-order fulfilment** allocation (never ship one customer's committed stock to another). The WO transfer
+is bounded by **availability**, and even that is a **default the operator can override**, not a hard cap.
+
+**The transfer screen exposes four figures** for the component at the source location:
+- **On hand** — physical quantity at the source location.
+- **Committed** — quantity there already committed (to SO/WO/TO).
+- **Available** — on hand − committed (what is free to move).
+- **Needed on the WO** — the BoM requirement × build quantity, net of what is already transferred/issued.
+
+**Default quantity to transfer = available.** The operator may override — down to *needed*, or up to pull
+*committed* stock deliberately.
+
+**Open (design details, not decided here):**
+- **Where the screen lives** — the committed/available figures are **NetSuite-sourced and volatile**; a Hub
+  (online) home gives live figures, a handheld (offline-first, invariant #11) home would read them from the
+  warmed snapshot. A default the operator overrides tolerates some staleness, but the screen's home matters.
+- **Default `available` vs `min(available, needed)`** — the ruling says *available*; recorded as a deliberate
+  choice (defaulting to *available* can over-stage to the floor when available > needed) so it is on record,
+  not an oversight. Both tracked in **Q-62**.
+
+**Affects:** D-43/D-44 (WO-flow detail), invariant #15 (scoped — SO fulfilment, not WO transfers), 06 §4
+(WO-flow note), Q-62 (new), the WO-flow task set (the transfer screen + its four figures).
 
 ---
 

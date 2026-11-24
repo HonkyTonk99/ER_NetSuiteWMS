@@ -119,7 +119,10 @@ the "picked for WO" transfer targets. **No SO over-commit arises:** a Sales Orde
 line's location (D-44), so a PRODUCTION location is **out of SO reach**, while the location-specific Work /
 Transfer Orders *can* commit it — the Q-29 opt-(a) separate-location mechanism working as designed, not the
 residual risk D-43 first supposed. The WMS tracks **"picked-for-WO (on the floor, not issued)"** as a state
-distinct from **"issued."**
+distinct from **"issued."** The transfer **moves stock regardless of commitment** — a location move **not
+gated by invariant #15** (which governs SO fulfilment allocation). The transfer screen exposes **on hand /
+committed / available / needed-on-WO** for the component and **defaults the transfer quantity to *available*,
+operator-overridable** (D-45).
 
 > **All shapes CONFIRMED against the platform (D-27, `08-platform-facts.md` PF-16..PF-21).** Inventory
 > detail is the `inventorydetail` subrecord's `inventoryassignment` sublist — `receiptinventorynumber`
