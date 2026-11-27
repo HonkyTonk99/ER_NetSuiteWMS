@@ -1,0 +1,52 @@
+<!--
+  customrecord_wms_operator - WMS identity (docs/03 section 3.11, D-19/D-40/D-50).
+  Operators have NO NetSuite login/licence (#24); identity links to an Employee for
+  attribution. Access is WMS-config: tier (PICKER/MANAGER) + cumulative access level
+  (VIEW<CREATE<EDIT, no DELETE). Authored WITHOUT an account - run
+  `suitecloud project:validate --server` before deploy.
+  externalid = operator code (platform-unique, D-12).
+-->
+<customrecordtype scriptid="customrecord_wms_operator">
+    <recordname>WMS Operator</recordname>
+    <accesstype>NONENEEDED</accesstype>
+    <allowattachments>F</allowattachments>
+    <allowinlineediting>F</allowinlineediting>
+    <allowuiaccess>T</allowuiaccess>
+    <enablesystemnotes>T</enablesystemnotes>
+    <includename>T</includename>
+    <isinactive>F</isinactive>
+    <customrecordcustomfields>
+        <customrecordcustomfield scriptid="custrecord_op_code">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Operator Code / Badge</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_op_employee">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Employee (internal id) - attribution anchor</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_op_pin_hash">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>PIN Hash (salted; never plaintext)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_op_active">
+            <fieldtype>CHECKBOX</fieldtype>
+            <label>Active</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_op_role">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Floor Role (Picker/Packer/Supervisor)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_op_tier">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Tier (PICKER/MANAGER, D-39/D-40)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_op_access_level">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Access Level (VIEW/CREATE/EDIT cumulative, no DELETE, D-50)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_op_allowed_locations">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Allowed Locations (CSV of internal ids; multi-location session D-53)</label>
+        </customrecordcustomfield>
+    </customrecordcustomfields>
+</customrecordtype>

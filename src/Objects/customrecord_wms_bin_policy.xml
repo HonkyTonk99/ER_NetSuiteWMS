@@ -1,0 +1,42 @@
+<!--
+  customrecord_wms_bin_policy - bin rules by bin type (docs/03 section 3.9b, AD-14).
+  Location-agnostic (D-14). Rows are seed DATA; this file deploys the TYPE only.
+  Authored WITHOUT an account - run `suitecloud project:validate --server` before deploy.
+  name = UNIT/BULK/STAGE/RECEIVING/QUALITY/RETURN/DEFECT.
+-->
+<customrecordtype scriptid="customrecord_wms_bin_policy">
+    <recordname>WMS Bin Policy</recordname>
+    <accesstype>NONENEEDED</accesstype>
+    <allowattachments>F</allowattachments>
+    <allowinlineediting>F</allowinlineediting>
+    <allowuiaccess>T</allowuiaccess>
+    <enablesystemnotes>T</enablesystemnotes>
+    <includename>T</includename>
+    <isinactive>F</isinactive>
+    <customrecordcustomfields>
+        <customrecordcustomfield scriptid="custrecord_bp_single_sku">
+            <fieldtype>CHECKBOX</fieldtype>
+            <label>Single SKU</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_bp_single_batch">
+            <fieldtype>CHECKBOX</fieldtype>
+            <label>Single Batch</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_bp_allow_direct_pick">
+            <fieldtype>CHECKBOX</fieldtype>
+            <label>Allow Direct Pick</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_bp_replen_target">
+            <fieldtype>CHECKBOX</fieldtype>
+            <label>Replen Target</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_bp_allow_putaway">
+            <fieldtype>CHECKBOX</fieldtype>
+            <label>Allow Putaway</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_bp_available_for_fulfilment">
+            <fieldtype>CHECKBOX</fieldtype>
+            <label>Available For Fulfilment (UNIT/BULK only, Q-16)</label>
+        </customrecordcustomfield>
+    </customrecordcustomfields>
+</customrecordtype>

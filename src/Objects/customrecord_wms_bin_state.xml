@@ -1,0 +1,65 @@
+<!--
+  customrecord_wms_bin_state - the operational truth of a bin (docs/03 section 3.2b,
+  invariant #1). One row per bin; the hot read/write record. Optimistic locking ON
+  (record.load+save conflict detection, AD-03/PF-11/PF-12). Authored WITHOUT an
+  account - run `suitecloud project:validate --server` before deploy.
+  externalid = bin identifier (platform-unique, D-12). No hard delete (T-11.3) -
+  an empty bin clears item/lot/qty and the row persists.
+-->
+<customrecordtype scriptid="customrecord_wms_bin_state">
+    <recordname>WMS Bin State</recordname>
+    <accesstype>NONENEEDED</accesstype>
+    <allowattachments>F</allowattachments>
+    <allowinlineediting>F</allowinlineediting>
+    <allowuiaccess>T</allowuiaccess>
+    <enableoptimisticlocking>T</enableoptimisticlocking>
+    <enablesystemnotes>T</enablesystemnotes>
+    <includename>T</includename>
+    <isinactive>F</isinactive>
+    <customrecordcustomfields>
+        <customrecordcustomfield scriptid="custrecord_bs_bin">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Bin (internal id)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_bs_location">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Location (internal id) - denormalised from bin, never mutated</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_bs_item">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Item (internal id) - empty when bin empty (invariant #20)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_bs_lot">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Lot / batch</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_bs_qty">
+            <fieldtype>FLOAT</fieldtype>
+            <label>Quantity (Decimal)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_bs_version">
+            <fieldtype>INTEGER</fieldtype>
+            <label>Version (optimistic concurrency)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_bs_last_event">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Last Event (internal id)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_bs_pending_delta">
+            <fieldtype>FLOAT</fieldtype>
+            <label>Pending Delta (accepted-but-unposted)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_bs_last_reconciled">
+            <fieldtype>DATETIMETZ</fieldtype>
+            <label>Last Reconciled</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_bs_putaway_ts">
+            <fieldtype>DATETIMETZ</fieldtype>
+            <label>Putaway Timestamp (FIFO fallback, D-09)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_bs_negative_since">
+            <fieldtype>DATETIMETZ</fieldtype>
+            <label>Negative Since (D-11 age threshold)</label>
+        </customrecordcustomfield>
+    </customrecordcustomfields>
+</customrecordtype>

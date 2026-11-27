@@ -1,0 +1,66 @@
+<!--
+  customrecord_wms_metric_snapshot - rolled-up metrics the dashboard reads
+  (docs/03 section 3.9, AD-12/invariant #10). The dashboard NEVER queries the raw
+  scan-event table - it reads these snapshots. Authored WITHOUT an account - run
+  `suitecloud project:validate --server` before deploy.
+-->
+<customrecordtype scriptid="customrecord_wms_metric_snapshot">
+    <recordname>WMS Metric Snapshot</recordname>
+    <accesstype>NONENEEDED</accesstype>
+    <allowattachments>F</allowattachments>
+    <allowinlineediting>F</allowinlineediting>
+    <allowuiaccess>T</allowuiaccess>
+    <enablesystemnotes>T</enablesystemnotes>
+    <includename>T</includename>
+    <isinactive>F</isinactive>
+    <customrecordcustomfields>
+        <customrecordcustomfield scriptid="custrecord_ms_location">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Location (internal id)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_ms_interval_start">
+            <fieldtype>DATETIMETZ</fieldtype>
+            <label>Interval Start</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_ms_interval_end">
+            <fieldtype>DATETIMETZ</fieldtype>
+            <label>Interval End</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_ms_operator">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Operator (internal id; blank = team-level row)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_ms_lines_picked">
+            <fieldtype>INTEGER</fieldtype>
+            <label>Lines Picked</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_ms_units_picked">
+            <fieldtype>INTEGER</fieldtype>
+            <label>Units Picked</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_ms_orders_packed">
+            <fieldtype>INTEGER</fieldtype>
+            <label>Orders Packed</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_ms_scans_total">
+            <fieldtype>INTEGER</fieldtype>
+            <label>Scans Total</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_ms_scans_error">
+            <fieldtype>INTEGER</fieldtype>
+            <label>Scans Error</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_ms_scans_override">
+            <fieldtype>INTEGER</fieldtype>
+            <label>Scans Override</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_ms_active_task">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Active Task</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_ms_zone">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Zone</label>
+        </customrecordcustomfield>
+    </customrecordcustomfields>
+</customrecordtype>

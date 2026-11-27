@@ -1,0 +1,54 @@
+<!--
+  customrecord_wms_serial_state - per-unit truth for serialised items (docs/03
+  section 3.13, D-29). A serial is in exactly one bin (invariant #21); bin-state qty
+  = count of serial rows in that bin (invariant #22). Optimistic locking ON (AD-03).
+  Authored WITHOUT an account - run `suitecloud project:validate --server` before deploy.
+  externalid = item + serial (platform-unique, D-12); one permanent row per (item,
+  serial) for all time; re-entry increments generation, never a second row (PF-23).
+  No hard delete ever.
+-->
+<customrecordtype scriptid="customrecord_wms_serial_state">
+    <recordname>WMS Serial State</recordname>
+    <accesstype>NONENEEDED</accesstype>
+    <allowattachments>F</allowattachments>
+    <allowinlineediting>F</allowinlineediting>
+    <allowuiaccess>T</allowuiaccess>
+    <enableoptimisticlocking>T</enableoptimisticlocking>
+    <enablesystemnotes>T</enablesystemnotes>
+    <includename>T</includename>
+    <isinactive>F</isinactive>
+    <customrecordcustomfields>
+        <customrecordcustomfield scriptid="custrecord_ss_item">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Item (internal id)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_ss_serial">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Serial Number</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_ss_bin">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Current Bin (internal id) - exactly one (invariant #21)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_ss_location">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Location (internal id) - denormalised from bin</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_ss_status">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Status (IN_STOCK/PICKED/SHIPPED/QUARANTINE/RETIRED)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_ss_generation">
+            <fieldtype>INTEGER</fieldtype>
+            <label>Generation (monotonic; mandatory, PF-23)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_ss_last_event">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Last Event (internal id)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_ss_version">
+            <fieldtype>INTEGER</fieldtype>
+            <label>Version (optimistic concurrency)</label>
+        </customrecordcustomfield>
+    </customrecordcustomfields>
+</customrecordtype>

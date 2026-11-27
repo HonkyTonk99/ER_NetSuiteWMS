@@ -1,0 +1,52 @@
+<!--
+  customrecord_wms_bin - bin master (docs/03 section 3.3, D-07). Bins live only in
+  the WMS; NetSuite Bin Management is OFF (invariant #13). Authored WITHOUT an
+  account - run `suitecloud project:validate --server` before deploy.
+  References carried as FREEFORMTEXT internal ids (slice convention) to minimise
+  deploy risk; the full model may promote them to List/Record selects.
+  name = location-prefixed bin code; externalid = that code (platform-unique, D-12).
+-->
+<customrecordtype scriptid="customrecord_wms_bin">
+    <recordname>WMS Bin</recordname>
+    <accesstype>NONENEEDED</accesstype>
+    <allowattachments>F</allowattachments>
+    <allowinlineediting>F</allowinlineediting>
+    <allowuiaccess>T</allowuiaccess>
+    <enablesystemnotes>T</enablesystemnotes>
+    <includename>T</includename>
+    <isinactive>F</isinactive>
+    <customrecordcustomfields>
+        <customrecordcustomfield scriptid="custrecord_wb_location">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Location (internal id) - IMMUTABLE (D-14)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_wb_type">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Bin Type (UNIT/BULK/STAGE/RECEIVING/QUALITY/RETURN/DEFECT)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_wb_policy">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Bin Policy (internal id)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_wb_zone">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Zone (location-scoped)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_wb_pick_sequence">
+            <fieldtype>INTEGER</fieldtype>
+            <label>Pick Sequence (walk-path order)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_wb_capacity">
+            <fieldtype>FLOAT</fieldtype>
+            <label>Capacity</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_wb_blocked">
+            <fieldtype>CHECKBOX</fieldtype>
+            <label>Blocked (excluded from allocation)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_wb_active">
+            <fieldtype>CHECKBOX</fieldtype>
+            <label>Active</label>
+        </customrecordcustomfield>
+    </customrecordcustomfields>
+</customrecordtype>

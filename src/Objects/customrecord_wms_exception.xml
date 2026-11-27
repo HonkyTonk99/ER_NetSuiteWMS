@@ -1,0 +1,61 @@
+<!--
+  customrecord_wms_exception - every FAILED event raises one (docs/03 section 3.8,
+  invariant #8). Authored WITHOUT an account - run `suitecloud project:validate
+  --server` before deploy. References carried as FREEFORMTEXT internal ids.
+-->
+<customrecordtype scriptid="customrecord_wms_exception">
+    <recordname>WMS Exception</recordname>
+    <accesstype>NONENEEDED</accesstype>
+    <allowattachments>F</allowattachments>
+    <allowinlineediting>F</allowinlineediting>
+    <allowuiaccess>T</allowuiaccess>
+    <enablesystemnotes>T</enablesystemnotes>
+    <includename>T</includename>
+    <isinactive>F</isinactive>
+    <customrecordcustomfields>
+        <customrecordcustomfield scriptid="custrecord_exc_source_event">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Source Event (internal id)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_exc_location">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Location (internal id)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_exc_type">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Exception Type</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_exc_severity">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Severity (LOW/MEDIUM/HIGH/CRITICAL)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_exc_status">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Status (OPEN/IN_PROGRESS/RESOLVED/WRITTEN_OFF)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_exc_assigned_to">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Assigned To (employee internal id)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_exc_resolution_action">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Resolution Action (RETRY/REVERSE/MANUAL_ADJUST/WRITE_OFF/NO_ACTION)</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_exc_resolution_notes">
+            <fieldtype>CLOBTEXT</fieldtype>
+            <label>Resolution Notes</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_exc_detected_at">
+            <fieldtype>DATETIMETZ</fieldtype>
+            <label>Detected At</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_exc_resolved_at">
+            <fieldtype>DATETIMETZ</fieldtype>
+            <label>Resolved At</label>
+        </customrecordcustomfield>
+        <customrecordcustomfield scriptid="custrecord_exc_resolved_by">
+            <fieldtype>FREEFORMTEXT</fieldtype>
+            <label>Resolved By (employee internal id)</label>
+        </customrecordcustomfield>
+    </customrecordcustomfields>
+</customrecordtype>
