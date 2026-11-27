@@ -1186,6 +1186,132 @@ is bounded by **availability**, and even that is a **default the operator can ov
 
 ---
 
+*The block below (D-46…D-58) was recorded 2026-11-27 — the sponsor answered the entire outstanding register
+in one pass to drive the design to **finalized before build**. The dominant doctrine is **"allow for it" =
+build the capability IN SCOPE and make it switchable via `customrecord_wms_config` (invariant #9), optionable
+by account/location where stated.** Two rulings change invariants (#19, #24); several widen scope; the rest
+confirm scope + configurability. All remain gated by T-0.3 for build. This **closes the register** (see
+`04-open-questions.md`, 2026-11-27 closure), leaving only sandbox-verification items (Q-40, Q-47) that confirm
+platform behaviour rather than design.*
+
+## D-46 — UOM conversion is IN scope · *accepted 2026-11-27 (sponsor); resolves Q-07*
+
+"Allow for UOM in WMS." The WMS carries base UOM + conversion factors (already in the item cache) and
+**converts between stock-keeping and transacting UOM** across all quantity flows. The earlier "remove UOM if
+eaches-only" option is withdrawn. **Affects:** item cache spec, all qty paths (Phase 2 & 4), Q-07.
+
+## D-47 — Work Order output transaction type is configurable per location · *accepted 2026-11-27 (sponsor); resolves Q-25*
+
+"Option the output transaction as an account-wide setting per location." Whether production output posts as
+**Work Order Completion** or **Assembly Build** is a `customrecord_wms_config` value, set account-wide and
+**overridable per location**. **Affects:** T-5.7, ledger adapter, config, Q-25.
+
+## D-48 — Negative inventory is a per-location option, default PREVENT · *accepted 2026-11-27 (sponsor); resolves Q-50; REVISES invariant #19*
+
+"Option set by location, default to prevent negative inventory." A per-location config `allow_negative`
+(default **false** = prevent) governs whether the WMS permits a PLAIN/LOT item to post/stand negative. Default
+everywhere is the committer's availability **pre-check-and-defer** (invariant #19). **This does NOT touch the
+serial rule — a serialised item can never go negative regardless (invariants #19/#21).** Where a location sets
+`allow_negative = true`, the prior "WMS may go negative for PLAIN/LOT" latitude applies; otherwise the outbound
+defers. **Affects:** invariant #19 (now per-location, default prevent), D-11, config, Q-50.
+
+## D-49 — Concurrency: assume NO SuiteCloud Plus, design for it, route processes to channels by config · *accepted 2026-11-27 (sponsor); resolves Q-49, Q-44*
+
+"Assume NOT SuiteCloud Plus, but allow for it to be used, and for different processes to be passed out to
+different channels via configuration." The design must function on the **base concurrency pool** (PF-01) and
+**scale** when SuiteCloud Plus licences are added; **process-to-queue/channel routing is config-driven**;
+whether Map/Reduce shares the Suitelet pool is **optionable** (Q-44). **Affects:** F-29, T-0.2, committer
+scheduling + deployment channels, config, Q-49, Q-44.
+
+## D-50 — Permission model is cumulative; Delete is never granted · *accepted 2026-11-27 (sponsor); resolves Q-43; REFINES invariant #24 / AD-19*
+
+"View = view; Create = view + create; Edit = view + create + edit; no delete." Access levels are **cumulative**
+and there is **no Delete level** anywhere in the WMS. The ingest Execute-As role sits at **Create**
+(append-only to the event queue — AD-19). **Affects:** invariant #24, AD-19, T-1.4/T-3.3, config, Q-43.
+
+## D-51 — Intercompany inventory: shared-across-subsidiary locations + per-location auto-IC toggle; intercompany TOs IN scope · *accepted 2026-11-27 (sponsor); resolves Q-52, Q-37*
+
+A **physical site may be shared across subsidiaries** (OneWorld) — each subsidiary its own NetSuite location
+within the one site (ties to the D-30 site model). A per-location toggle **"allow automatic intercompany
+inventory" / "prevent automatic intercompany inventory"** governs cross-subsidiary moves. **Intercompany
+Transfer Orders are IN scope** (reverses Q-37's "out of v1"). **Affects:** OneWorld (PF-19/Q-52), TO scope
+(D-22), D-30 (site spans subsidiaries), config, 00/06, Q-52, Q-37.
+
+## D-52 — Transfer Order is a first-class managed order type; in-transit supported · *accepted 2026-11-27 (sponsor); resolves Q-36; Q-40 → sandbox-verify*
+
+"A TO is an order type that needs to be managed alongside a sales order and a work order." **SO, WO and TO are
+the three managed order types.** **In-transit inventory is supported** (both in-transit and direct
+ship-receive); an in-transit location is excluded from operational picking/waves via the location class
+(D-30). The exact `transferorder`→fulfilment/receipt **transform shapes stay a sandbox verification** (Q-40,
+under Q-47 "deploy to sandbox and confirm"). **Affects:** D-22, F-30, location class, Q-36 (resolved), Q-40
+(sandbox-verify).
+
+## D-53 — Multi-location session supported as a configurable mode; one-per-session is the default · *accepted 2026-11-27 (sponsor); resolves Q-31; REFINES D-14*
+
+"Allow for this… but it is allowed for a multi-location set up." **One location per session remains the
+default**; a **multi-location session is a supported, configured mode** — the cache warms the session's
+location(s), and switching/adding still requires connectivity (the #11 exception). **Affects:** D-14,
+cache-warm (Part E), invariant #11, config, Q-31.
+
+## D-54 — QMS posture = Option A: integrate QMS as the inspection layer; the WMS owns all stock movement · *accepted 2026-11-27 (sponsor); resolves Q-63, Q-63a*
+
+"Allow for this" + "QMS should be able to run with and without bin management." The NetSuite **QMS SuiteApp is
+integrated as the inspection layer** — specifications, inspections, **AQL/ISO sampling**, test data, COA,
+scorecards. **The WMS owns ALL stock movement**: quarantine via Inventory Transfer to an RQD/HOLDING location
+(D-28/D-31), fail via write-off (D-33) — **QMS's bin + Inventory-Status quarantine workflows are NOT used**
+(foreclosed by D-07/D-41). Because QMS runs **with or without bin management** (Q-63a), integration is viable.
+The **licence-free floor** (invariant #24, D-19) feeds QMS via its REST / integration API
+(`qm_rest_queue`, `qm_integration_module`); QMS's own licensed tablet is optional, not the floor path.
+**Affects:** a new QMS-integration scope + phase, 00/06, D-41 (inspection is additive, not the excluded
+features), invariant #24 (floor stays licence-free), Q-63, Q-63a.
+
+## D-55 — Zones & pick-paths (route optimisation) are IN scope · *accepted 2026-11-27 (sponsor); resolves Q-65*
+
+"Allow for this." Bins carry a **zone** and a **pick sequence**; waves and pick lists order by the walking
+path. Closes the WMS GO efficiency gap. **Affects:** data model (bin zone + sequence fields), wave/pick engine
+(Phase 6/7), config, Q-65.
+
+## D-56 — Ingest Suitelet response is 200-with-body; the client branches on the body status · *accepted 2026-11-27 (sponsor — deferred to design); resolves Q-41*
+
+Q-41 explained: a Suitelet **cannot reliably set a non-200 HTTP status (PF-03)**, so the ingest endpoint
+returns **HTTP 200 with a per-event status in the JSON body** (accepted / busy-retry / rejected) and the
+client **branches on the body status, not the HTTP code**. Sandbox may refine the retry signal. **Affects:**
+T-3.1/T-3.2 client, F-29, Q-41.
+
+## D-57 — Scan-event retention: archive to a durable store BEFORE any purge; retention configurable · *accepted 2026-11-27 (sponsor — deferred to design); resolves Q-09*
+
+Q-09 explained (what "purge vs archive" means): scan events are **exported to a durable store (external or File
+Cabinet) before any purge**, so the record of *who scanned what* is never destroyed. The retention window is
+**configurable** (#9); default retains to meet lot-traceability/audit needs. **Compliance should still confirm
+the statutory retention period.** **Affects:** T-11.1, config, Q-09 (compliance confirm outstanding).
+
+## D-58 — Register-closure batch: remaining items confirmed IN SCOPE and CONFIGURABLE · *accepted 2026-11-27 (sponsor)*
+
+Each below is **in scope** and built **configurable** (#9), with no bespoke mechanism ruled beyond
+flexibility:
+
+| Q | Disposition |
+|---|---|
+| Q-11 | Short-pick policy (ship-partial / hold / backorder) is **config, per order/customer**. |
+| Q-12 | Pick cart/tote capacity is **config** (caps wave cluster size, AD-10). |
+| Q-17 | Max offline duration is **config** (warn/block thresholds). |
+| Q-27 | PO over-receipt tolerance + supervisor-override threshold is **config**. |
+| Q-29 | Non-fulfillable over-commit handled by a **separate holding location** (opt a — already the design; D-16/D-30). |
+| Q-47 | Environment: **deploy to the sandbox and confirm functionality** (closes the design-side; sandbox is the proving ground). |
+| Q-48 | **Camera scanning supported** alongside the keyboard-wedge (wedge primary). |
+| Q-51 | Multi-Book: **no design impact** — the existing book-specific `closed` caveat (invariant #16/PF-25) suffices. |
+| Q-53 | Write-off GL offset account + finance-approval threshold are **config** (D-33). |
+| Q-54 | Serial **adopt path** at cutover is in scope — supervisor-authorised, reconciled (D-29 §3.13b). |
+| Q-62 | WO-transfer screen built **flexible** — four figures, default = available, overridable (D-45); its home (Hub/handheld) decided at build. |
+| Q-64 | **WO Issue accommodated when WIP routing is enabled** — confirms D-35/D-43. |
+| Q-42 | Governance: **yield and reschedule** when units run low — confirms F-17/#9. |
+| Q-66 | Minor Hub/setup conveniences (global search, onboarding wizard, branding, item-config grid, bulk bin import) **in scope**. |
+
+**Affects:** the listed Qs (resolved), config schema (many new tuning values), Phase scoping, 04 register
+closure.
+
+---
+
 ## Superseded
 
 | Item | Status |
@@ -1220,3 +1346,5 @@ is bounded by **availability**, and even that is a **default the operator can ov
 | **T-0.4 (audit inventorybalance by bin)** | **Superseded by D-17** — bin data migrates from a third-party app (case b) |
 | **T-0.6 / the whole lock subsystem** | **Superseded by D-12** — see AD-04, AD-05 rows |
 | **D-43 "inherits F-26/Q-29 over-commit" caveat** | **Corrected by D-44** — SO commitment is location-specific, so a separate PRODUCTION location sees no SO over-commit; it is the Q-29 opt-(a) mechanism working, not a residual risk |
+| **Invariant #19 — "the WMS may go negative for PLAIN and LOT" (unconditional)** | **Revised by D-48** — negative is now a **per-location option, default PREVENT**; serial can never go negative regardless |
+| **Q-37 — intercompany TOs "out of scope v1"** | **Reversed by D-51** — intercompany TOs are IN scope; a site may span subsidiaries with a per-location auto-IC toggle |

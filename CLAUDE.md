@@ -45,6 +45,15 @@ shop-floor locations (a WO builds at one) and records that location-specific SO 
 stock out of sales-order reach (committable to the location-specific WO/TO instead). **D-45** sets the WO
 component-transfer UI: expose on-hand / committed / available / needed, default the transfer qty to available,
 operator-overridable — the transfer is a location move not gated by invariant #15.*
+*Further revised 2026-11-27 — the sponsor closed the register (D-46…D-58): UOM in scope (D-46); per-location
+WO output type (D-47); negative inventory a per-location option, **default PREVENT** (D-48, revises #19);
+concurrency sized for the base pool + config channel routing, no SuiteCloud Plus assumed (D-49); **cumulative
+permissions, no Delete** (D-50, refines #24); intercompany inventory + shared-subsidiary sites + intercompany
+TOs in scope (D-51); TO a first-class order type, in-transit supported (D-52); multi-location session
+configurable (D-53, refines D-14); **QMS integrated as the inspection layer with the WMS owning all movements**
+(D-54); zones & pick-paths in scope (D-55); 200-with-body ingest contract (D-56); scan-event
+archive-before-purge (D-57); remaining items in scope + configurable (D-58). All design-in, still gated by
+T-0.3.*
 
 1. **`customrecord_wms_bin_state` is the operational truth of a bin, not `inventorybalance`.** The
    ledger lags by the event queue **by a measured window** (established in T-12.1, not an assumed
@@ -131,7 +140,10 @@ operator-overridable — the transfer is a location move not gated by invariant 
     the *only* control for them. **A serialised item can never go negative in the WMS either — you cannot
     ship a serial you do not hold (invariant #21).** An outbound NetSuite cannot satisfy is set `DEFERRED`
     and retried — **never `FAILED` on first attempt.** Deferred is legitimate work in the wrong sequence;
-    failed needs a human. Keep them distinct or the exception queue becomes noise. (F-25, AD-18, D-29)
+    failed needs a human. Keep them distinct or the exception queue becomes noise. **Per-location option
+    (D-48): `allow_negative` defaults to FALSE (prevent) — the pre-check/defer above is the default
+    everywhere; a location may opt to allow PLAIN/LOT negatives. A serial is never negative regardless
+    (#21).** (F-25, AD-18, D-29, D-48)
 20. **A bin is EMPTY when `custrecord_bs_item` is cleared — not when quantity equals zero.** Never test
     emptiness with a float comparison: `custrecord_bs_qty` is a Decimal, and UOM conversion or partial
     units can leave fractional residue (a bin at `0.0000001` would read as permanently occupied). A bin
@@ -160,7 +172,9 @@ operator-overridable — the transfer is a location move not gated by invariant 
     person. Pickers still hold **no NetSuite login or licence** (D-19 unchanged). What a user may do —
     **PICKER vs MANAGER**, which sites/locations, which floor screens and which Hub screens — is a WMS
     config decision (`customrecord_wms_operator` + role config), applied in-app, so access is granted and
-    revoked without touching NetSuite roles. (D-39, D-40)
+    revoked without touching NetSuite roles. **Access levels are cumulative and Delete is NEVER granted
+    (D-50): View ⊂ Create ⊂ Edit; the ingest Execute-As role sits at Create (append-only to the event
+    queue, AD-19).** (D-39, D-40, D-50)
 
 ## Conventions
 

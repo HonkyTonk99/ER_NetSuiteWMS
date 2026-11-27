@@ -117,6 +117,16 @@ nice-to-have** (Phase 8).
 - **The structural divergence from WMS GO is deliberate** (D-42): the WMS owns bins/lots/serial because
   native NetSuite handling is judged subpar — not a workaround. Apart from that axis, WMS GO and
   ER_NetSuiteWMS are treated as functional peers.
+- **Register closed 2026-11-27 (D-46…D-58) — design finalized pending sandbox verification.** Newly confirmed
+  in scope, all configurable (#9): UOM conversion (D-46); per-location **WO output transaction type** (D-47);
+  **negative inventory per-location, default PREVENT** (D-48, revises #19); base-pool concurrency with
+  config-driven channel routing, no SuiteCloud Plus assumed (D-49); **cumulative permissions, no Delete**
+  (D-50, refines #24); **intercompany inventory + shared-subsidiary sites + intercompany TOs** (D-51); **TO a
+  first-class order type alongside SO/WO, in-transit supported** (D-52); **multi-location session** as a
+  configurable mode (D-53, refines D-14); **QMS integrated as the inspection layer, the WMS owning all stock
+  movement** (D-54); **zones & pick-paths** (D-55); the ingest 200-with-body contract (D-56); scan-event
+  archive-before-purge (D-57); and short-pick / cart / offline / over-receipt / camera / write-off /
+  serial-adopt / Hub conveniences (D-58). Only **sandbox-verification** items remain (Q-40, Q-47).
 - **The WMS is operationally primary, but NetSuite retains authority over commitment and cost**
   (D-10, AD-17). The WMS allocates *within* NetSuite's commitment and runs all bin-level allocation
   and replenishment rules. **Costing is entirely NetSuite's** — the WMS supplies quantity, date and

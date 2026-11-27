@@ -124,6 +124,23 @@ gated by invariant #15** (which governs SO fulfilment allocation). The transfer 
 committed / available / needed-on-WO** for the component and **defaults the transfer quantity to *available*,
 operator-overridable** (D-45).
 
+**2026-11-27 register-closure notes (D-46…D-58) affecting this boundary:**
+- **WO output transaction type is per-location config** — Work Order Completion *or* Assembly Build (D-47).
+- **Negative inventory is a per-location option, default PREVENT** (D-48, revises invariant #19). The
+  availability pre-check/defer is the default; a location may opt to allow PLAIN/LOT negatives; a serial is
+  never negative regardless.
+- **Intercompany in scope (D-51):** a **site may span subsidiaries** (each subsidiary its own NetSuite
+  location within the site, per D-30), with a per-location toggle **allow / prevent automatic intercompany
+  inventory**; **intercompany Transfer Orders** are in scope. Cross-subsidiary postings still observe
+  `PARTIAL_FULFILL_RCEIV_DISALLWD` (PF-19/Q-52).
+- **TO is a first-class managed order type** alongside SO and WO, **in-transit supported** (D-52); the
+  `transferorder` transform shapes remain a sandbox verification (Q-40).
+- **QMS is integrated as the inspection layer only (D-54):** QMS owns inspection specs / AQL sampling / test
+  data / COA; **the WMS owns every stock movement** — quarantine is an Inventory Transfer to an RQD/HOLDING
+  location (D-28/D-31), fail is a write-off Inventory Adjustment (D-33). QMS's **bin + Inventory-Status
+  quarantine workflows are NOT used** (foreclosed by D-07/D-41); QMS runs with or without bin management, and
+  the licence-free floor feeds it via `qm_rest_queue` / `qm_integration_module`.
+
 > **All shapes CONFIRMED against the platform (D-27, `08-platform-facts.md` PF-16..PF-21).** Inventory
 > detail is the `inventorydetail` subrecord's `inventoryassignment` sublist — `receiptinventorynumber`
 > (in) / `issueinventorynumber` (out) + `quantity`; **no bin-number field** (invariant #13). Standard mode
