@@ -202,8 +202,8 @@ drain. Each item traces to a phase's `G2-PENDING`.
 |---|---|---|
 | 0 Discovery | CLEARED | account facts pending (Phase 14) |
 | 1 Data model & config | **CLEARED** (9 record objects + schema-consistency test; replen/wave/custody records authored in their phases 5/6/7) | SDF deploy + `Indexed` setting (Phase 14) |
-| 2 Core services | in progress (carve-outs built; UOM + config loader next) | — |
-| 3 Ingestion + PWA | partial (Suitelet slice) | — |
+| 2 Core services | **CLEARED** (UOM + config loader built & tested; cache/idempotency/validation/policy/registry in place) | N/ fetch wrappers for config rows + item cache (Phase 14) |
+| 3 Ingestion + PWA | partial (Suitelet slice) — next | — |
 | 4 Ledger commit | partial (PO path) | — |
 | 5 / 5B / 6 / 7 / 8 / 9 / 9Q | not started | — |
 | 10 / 11 / 12 / 13 | not started | — |
