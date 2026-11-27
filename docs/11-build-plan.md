@@ -208,6 +208,7 @@ drain. Each item traces to a phase's `G2-PENDING`.
 | 5 Replenishment | **CLEARED (logic)** — FEFO source selection + #23 holding/production hard guard | end-to-end move in sandbox (Phase 14) |
 | 5B Inbound + WO flow | **CLEARED (logic)** — directed putaway, WO pick-to-floor/issue + transfer screen (D-45), over-receipt (Q-27), serial entry/pick validation (section 3.13b) | real transforms incl WO Issue (Phase 14) |
 | 6 Waves + zones | **CLEARED (logic)** — pick-path routing (D-55) + commitment-bounded allocation (#15/F-22); clustering was built (T-6.1) | wave release in sandbox (Phase 14) |
-| 7 Pick/pack/kits/labels | in progress | — |
-| 8 / 9 / 9Q | not started | — |
+| 7 Pick/pack/kits/labels | **CLEARED (logic)** — kit expand + all-or-nothing completeness (D-36), label render + auto-print rule (D-38), short-pick policy (Q-11) | fulfilment transform + real printers (Phase 14) |
+| 8 Exceptions + count | in progress | — |
+| 9 / 9Q | not started | — |
 | 10 / 11 / 12 / 13 | not started | — |
