@@ -1310,6 +1310,22 @@ flexibility:
 **Affects:** the listed Qs (resolved), config schema (many new tuning values), Phase scoping, 04 register
 closure.
 
+## D-59 — Sandbox verification is a post-development stage; G1 (code + verify) is the development-completion gate · *accepted 2026-11-27 (sponsor)*
+
+**Ruling:** "I understand that sandbox deployment is essential for the build acceptance to be completed. I'm
+gating Sandbox as a post development task, as part of unit testing and solution UAT."
+
+The build runs on a **two-tier acceptance model** (`docs/11-build-plan.md`): **G1** — code/objects exist,
+`npm run verify` green, non-account acceptance criteria pass — is the **development-completion gate** Claude
+assesses and **auto-advances** on, phase by phase, notifying as each clears. **G2** — deploy, real transforms,
+governance, offline/concurrency, QMS round-trip, migration — is **consolidated into a single post-development
+stage, Phase 14 (Sandbox Deployment, Integration & Solution UAT)**, which holds whole-solution acceptance.
+Sandbox verification is **essential and not skipped** — it is sequenced *after* development, not interleaved
+as a per-phase blocker. Claude never marks a G2 item passed; it accumulates them into Phase 14.
+
+**Affects:** `docs/11-build-plan.md` (the build-execution plan), the Definition of Done sequencing (sandbox
+acceptance moves to Phase 14), the auto-advance protocol.
+
 ---
 
 ## Superseded

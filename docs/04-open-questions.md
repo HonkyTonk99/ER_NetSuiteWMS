@@ -152,6 +152,11 @@ phase is scheduled** — they are not "we'll work it out in the sprint" question
 >   Q-64, Q-42, Q-66 — see the D-58 table in `05-decisions-log.md`.
 > - **Still open = sandbox verification only** (platform behaviour, not design): **Q-40** (TO transforms) and
 >   **Q-47's deploy-and-confirm** step. **The T-0.3 design gate is met.**
+>
+> **Updated 2026-11-27 (D-59).** Sandbox verification is **gated as a post-development stage** — all G2
+> (in-account) checks, these two included, are consolidated into **Phase 14 (Sandbox Deployment & Solution
+> UAT)** in `docs/11-build-plan.md`. Development proceeds on the G1 (code + `npm run verify`) gate, which
+> Claude auto-advances; whole-solution acceptance lives in Phase 14.
 
 | ID | Question | Why it matters | Blocks | Recommendation | Owner | Decision |
 |---|---|---|---|---|---|---|
