@@ -47,7 +47,7 @@ or an operator action **carries a mandatory Location** and every operational que
 |---|---|---|
 | **`externalid`** *(standard field)* | — | **= client UUID v4. Platform-enforced UNIQUE (D-12) — the primary idempotency guard (AD-04 layer 1).** Ingestion sets it and attempts the create; a duplicate fails at the platform |
 | `custrecord_se_event_id` | Free-Form Text | Mirrors the UUID in `externalid` for convenient search/grouping (custom fields are easy to filter on). **Not itself unique** — the uniqueness lives on `externalid`. The committer groups by UUID as a dedupe safety net (AD-04 layer 2) |
-| `custrecord_se_type` | List/Record | PICK, PACK, REPLEN_MOVE, BIN_TRANSFER, COUNT, **SHORT_PICK, OVERRIDE, PUTAWAY, EXCEPTION, RECEIPT_PO, RECEIPT_TO, RECEIPT_WO** *(inbound added per D-09)*, **`LINE_FREEZE`** *(AD-21/PF-26)*, **`RECEIPT_RMA`** *(new, D-32 — customer return receipt; a serial entry point, Part D)*, **`WRITE_OFF`** *(new, D-33 — scrap/write-off; posts an Inventory Adjustment; mandatory reason code + supervisor authorisation; retires named serials. Handler registered per task, not by editing the carved-out registry)* |
+| `custrecord_se_type` | List/Record | PICK, PACK, REPLEN_MOVE, BIN_TRANSFER, COUNT, **SHORT_PICK, OVERRIDE, PUTAWAY, EXCEPTION, RECEIPT_PO, RECEIPT_TO, RECEIPT_WO** *(inbound added per D-09)*, **`LINE_FREEZE`** *(AD-21/PF-26)*, **`RECEIPT_RMA`** *(new, D-32 — customer return receipt; a serial entry point, Part D)*, **`WRITE_OFF`** *(new, D-33 — scrap/write-off; posts an Inventory Adjustment; mandatory reason code + supervisor authorisation; retires named serials. Handler registered per task, not by editing the carved-out registry)*, **`WO_ISSUE`** *(new, D-35/D-43 — Work Order component issue; consumes components from the shop-floor PRODUCTION location into WIP at build start when WIP+Routing is enabled. The WO "pick-to-floor" step is not a distinct type — it reuses an Inventory-Transfer-posting movement, warehouse → shop-floor)* |
 | `custrecord_se_operator` | List/Record → Employee | |
 | `custrecord_se_wave` | List/Record → Wave Pick | |
 | `custrecord_se_order` | List/Record → Transaction | |
@@ -273,6 +273,21 @@ the **10 MB Map/Reduce value limit** at high serial share (D-34/PF-10), not only
 process-ratio threshold (~6%), the window length for each, and the minimum denominator before each ratio
 is evaluated (a ratio over a tiny denominator is noise).
 
+**Added 2026-11-27 (register closure D-46…D-58) — each a global default + optional per-location override:**
+- **`custrecord_cfg_wo_output_type`** — `WORK_ORDER_COMPLETION | ASSEMBLY_BUILD` (D-47), per location.
+- **`custrecord_cfg_allow_negative`** — Checkbox, **default FALSE (prevent)** (D-48/#19). False = the committer
+  defers rather than let a PLAIN/LOT item go negative; a serial is never negative regardless (#21).
+- **`custrecord_cfg_auto_intercompany`** — `ALLOW | PREVENT` automatic intercompany inventory (D-51), per
+  location; relevant where a site spans subsidiaries.
+- **`custrecord_cfg_multi_location_session`** — Checkbox (D-53). Default FALSE = one location per session;
+  TRUE permits a multi-location session (cache warms several locations).
+- **`custrecord_cfg_uom_enabled`** — Checkbox (D-46). Turns on UOM conversion (base UOM + factors from the
+  item cache; `custrecord_se_uom` on the event).
+- **short-pick policy** (`SHIP_PARTIAL | HOLD | BACKORDER`, Q-11); **over-receipt tolerance %** + override
+  threshold (Q-27); **offline warn / block minutes** (Q-17); **cart / tote capacity** (Q-12); **scan-event
+  retention days** + archive target (Q-09/D-57); **write-off offset GL account** + finance-approval threshold
+  (Q-53); **camera-scan enabled** (Q-48). All config (D-58, invariant #9).
+
 **Not a single global row (D-14).** There is a **global-defaults row** plus **optional per-location
 override rows** (`custrecord_cfg_location` — blank on the global row, set on an override). **Precedence:
 the location row wins field-by-field; a value absent on the location row inherits the global default.**
@@ -292,8 +307,10 @@ this record; identity flows into `custrecord_se_operator` (→ Employee).
 | `custrecord_op_employee` | List/Record → Employee | Links to the Employee record used for attribution (no login licence needed) |
 | `custrecord_op_pin_hash` | Free-Form Text | **Hashed** PIN (salted). **Never plaintext** (T-3.3) |
 | `custrecord_op_active` | Checkbox | Deactivating cuts the operator off; every API call checks it |
-| `custrecord_op_role` | List/Record | Picker / Packer / Supervisor — drives on-device capability |
-| `custrecord_op_allowed_locations` | Multi-select → Location | **New (D-14).** Which locations this operator may select at login. **Location is a per-session selection, not a property of the operator** — the record itself is location-agnostic (§ Location scoping). **WMS-ENFORCED (D-19 confirmed):** the Suitelet runs under one fixed Execute-As role, so per-operator authorisation is WMS-owned by definition — this list is validated at login and at session-token issuance (T-3.3), and the token carries the selected location. Not advisory |
+| `custrecord_op_role` | List/Record | Picker / Packer / Supervisor — drives on-device capability within the floor tier |
+| **`custrecord_op_tier`** | List/Record | **New (D-39/D-40).** **PICKER** (floor) vs **MANAGER** (Hub). Drives which floor screens and which Hub screens the user may open. Access is a WMS-config decision, never inherited from a NetSuite permission role (#24) |
+| **`custrecord_op_access_level`** | List/Record | **New (D-50).** Cumulative: **VIEW ⊂ CREATE ⊂ EDIT**; there is **no DELETE level anywhere** in the WMS. The public ingest Execute-As role operates at **CREATE** (append-only to the event queue, AD-19) |
+| `custrecord_op_allowed_locations` | Multi-select → Location | **New (D-14).** Which locations this operator may select at login. **Location is a per-session selection, not a property of the operator** — the record itself is location-agnostic (§ Location scoping). **WMS-ENFORCED (D-19 confirmed):** the Suitelet runs under one fixed Execute-As role, so per-operator authorisation is WMS-owned by definition — this list is validated at login and at session-token issuance (T-3.3), and the token carries the selected location. Not advisory. With `custrecord_cfg_multi_location_session` (D-53) the login may select **several** locations and the cache warms all of them |
 
 > The PIN hash and the HMAC session-token secret (a script parameter) are the two secrets in the
 > system. Neither is ever returned to the browser. See T-3.3 and F-27.
