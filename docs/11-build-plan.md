@@ -212,5 +212,7 @@ drain. Each item traces to a phase's `G2-PENDING`.
 | 8 Exceptions + count | **CLEARED (logic)** — exception raise/severity (#8), blind count variance + approval gate (D-37), reconciliation drift + serial consistency (T-8.3/#22) | adjustment posting + approval in-account (Phase 14) |
 | 9 Dashboard + Hub | **CLEARED (logic)** — metric-snapshot aggregation (#10); Hub UI is a thin shell | live data + role enforcement in-account (Phase 14) |
 | 9Q QMS integration | **CLEARED (logic)** — inspection-request mapping + outcome->WMS movement (D-54; WMS owns the move) | QMS SuiteApp round-trip in sandbox (Phase 14) |
-| 10 Migration | in progress | — |
-| 11 / 12 / 13 | not started | — |
+| 10 Migration | **CLEARED (logic)** — bin-import validation (collision + mixed-bin, T-0.4) | real data load + cutover freeze/delta (Phase 14) |
+| 11 Housekeeping | **CLEARED (logic)** — archive-before-purge retention (D-57) | scheduled scripts + external archive (Phase 14) |
+| 12 Performance | **CLEARED (logic)** — batch sizing (units+value+config), yield, channel routing (D-49/D-34) | governance measured under load (Phase 14) |
+| 13 Cutover | **CLEARED (logic)** — serial adopt path (D-58/Q-54) | UAT + parallel run + go-live (Phase 14) |
