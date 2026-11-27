@@ -216,3 +216,9 @@ drain. Each item traces to a phase's `G2-PENDING`.
 | 11 Housekeeping | **CLEARED (logic)** — archive-before-purge retention (D-57) | scheduled scripts + external archive (Phase 14) |
 | 12 Performance | **CLEARED (logic)** — batch sizing (units+value+config), yield, channel routing (D-49/D-34) | governance measured under load (Phase 14) |
 | 13 Cutover | **CLEARED (logic)** — serial adopt path (D-58/Q-54) | UAT + parallel run + go-live (Phase 14) |
+| **SAT tier-1** | **GREEN** — `test/solution_acceptance.test.js`, 8 cross-phase scenarios | SAT tier-2 = Phase 14 UAT |
+| **14 Sandbox + UAT** | n/a (G2 stage) | **READY — runbook `docs/12-phase14-sandbox-uat.md`** |
+
+> **G1 TRACK COMPLETE (2026-11-27).** Phases 0-13 development-complete; `npm run verify` green (37 suites,
+> 336 tests). Every in-account check is consolidated into Phase 14 (docs/12). Nothing faked; sandbox is the
+> next and final gate (D-59).
